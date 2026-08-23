@@ -231,9 +231,11 @@
     const payload = {
       products: getProducts('bybit'),
       spot_symbols: splitValues(byId('bybitSpotSymbols').value),
-      linear_settle_coins: splitValues(byId('bybitLinearCoins').value),
-      inverse_settle_coins: splitValues(byId('bybitInverseCoins').value),
     };
+    const linearSettleCoins = splitValues(byId('bybitLinearCoins').value);
+    const inverseSettleCoins = splitValues(byId('bybitInverseCoins').value);
+    if (linearSettleCoins.length) payload.linear_settle_coins = linearSettleCoins;
+    if (inverseSettleCoins.length) payload.inverse_settle_coins = inverseSettleCoins;
     const historyStart = isoOrNull(byId('bybitHistoryStart').value);
     if (historyStart) payload.history_start = historyStart;
     return payload;
@@ -567,14 +569,6 @@
     document.querySelector('input[name="source"][value="binance"]').checked = true;
     ['binanceLabel', 'bybitLabel', 'bitgetLabel'].forEach((id) => { byId(id).disabled = false; });
     byId('detailsForm').reset();
-    byId('binanceLabel').value = 'Binance Main';
-    byId('binanceConnectionName').value = 'Binance Read-only';
-    byId('bybitLabel').value = 'Bybit Main';
-    byId('bybitConnectionName').value = 'Bybit Read-only';
-    byId('bitgetLabel').value = 'Bitget Main';
-    byId('bitgetConnectionName').value = 'Bitget Read-only';
-    byId('hyperliquidLabel').value = 'Hyperliquid';
-    byId('evmLabel').value = 'Main Wallet';
     document.querySelectorAll('input[name="binanceProduct"]').forEach((input) => { input.checked = true; });
     document.querySelectorAll('input[name="bybitProduct"], input[name="bitgetProduct"]').forEach((input) => { input.checked = true; });
     byId('hyperliquidSpot').checked = true;
