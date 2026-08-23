@@ -237,14 +237,23 @@ class HyperliquidSyncService:
                     account_id=account.id,
                     source_raw_event_id=state_raw.id,
                     provider="hyperliquid",
-                    currency="USDC",
+                    # Hyperliquid's marginSummary.accountValue is the
+                    # clearinghouse USD account-value result, not a raw token
+                    # balance. Store that reporting unit explicitly so the
+                    # dashboard does not require an unrelated USDC price row
+                    # before it can display authoritative perp equity.
+                    currency="USD",
                     equity=decimal_value(summary.get("accountValue")),
                     withdrawable=decimal_value(state.get("withdrawable")),
                     margin_used=decimal_value(summary.get("totalMarginUsed")),
                     total_notional=decimal_value(summary.get("totalNtlPos")),
                     unrealized_pnl=unrealized_total,
                     as_of=as_of,
-                    metadata_json={"total_raw_usd": summary.get("totalRawUsd"), "address": address},
+                    metadata_json={
+                        "total_raw_usd": summary.get("totalRawUsd"),
+                        "address": address,
+                        "equity_source_field": "marginSummary.accountValue",
+                    },
                 )
             )
             self.stats.equity_created += 1

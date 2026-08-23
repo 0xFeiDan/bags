@@ -54,3 +54,14 @@ def test_production_ui_contains_no_known_sample_records_or_prefilled_names():
     )
 
     assert not [marker for marker in forbidden_markers if marker in shipped_ui]
+
+
+def test_sync_and_first_dashboard_load_build_real_accounting_snapshots():
+    connections_script = (PROJECT_ROOT / "connections.js").read_text(encoding="utf-8")
+    dashboard_script = (PROJECT_ROOT / "dashboard.js").read_text(encoding="utf-8")
+
+    assert "await refreshPortfolioSnapshot(portfolioId, run);" in connections_script
+    assert "await refreshPortfolioSnapshot(account.portfolio_id, run);" in connections_script
+    assert "async function loadPortfolioSummary(portfolioId)" in dashboard_script
+    assert "`/dashboard/portfolios/${portfolioId}/snapshots`" in connections_script
+    assert "`/dashboard/portfolios/${portfolioId}/snapshots`" in dashboard_script

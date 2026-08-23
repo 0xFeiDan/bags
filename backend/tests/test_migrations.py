@@ -27,3 +27,16 @@ def test_phase9_recreates_asset_identity_index(monkeypatch) -> None:
         "CREATE UNIQUE INDEX ux_asset_identity "
         "ON assets (canonical_symbol, chain_id, contract_address) NULLS NOT DISTINCT",
     ]
+
+
+def test_phase10_corrects_only_hyperliquid_equity_units(monkeypatch) -> None:
+    migration = _load_migration("20260823_0010_hyperliquid_equity_unit.py")
+    statements: list[str] = []
+    monkeypatch.setattr(migration.op, "execute", statements.append)
+
+    migration.upgrade()
+
+    assert statements == [
+        "UPDATE account_equity_snapshots SET currency = 'USD' "
+        "WHERE provider = 'hyperliquid' AND currency = 'USDC'"
+    ]

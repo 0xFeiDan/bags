@@ -23,6 +23,7 @@ from app.models import (
 )
 from app.schemas import HyperliquidSyncRequest
 from app.services.crypto import CredentialCipher
+from app.services.dashboard import DashboardService
 
 TEST_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
 ADDRESS = "0x1111111111111111111111111111111111111111"
@@ -216,6 +217,7 @@ def test_hyperliquid_sync_normalizes_equity_positions_history_and_is_idempotent(
     }
     equity = db_session.scalar(select(AccountEquitySnapshot).where(AccountEquitySnapshot.account_id == account.id))
     assert equity.equity == 1000
+    assert equity.currency == "USD"
     assert equity.unrealized_pnl == 500
     position = db_session.scalar(select(PositionSnapshot).where(PositionSnapshot.account_id == account.id))
     assert position.symbol == "BTC"
@@ -234,6 +236,51 @@ def test_hyperliquid_sync_normalizes_equity_positions_history_and_is_idempotent(
     assert second.stats_json["raw_existing"] == raw_count
     assert db_session.scalar(select(func.count()).select_from(RawEvent)) == raw_count
     assert db_session.scalar(select(func.count()).select_from(LedgerEvent)) == ledger_count
+
+
+def test_hyperliquid_sync_can_build_visible_dashboard_snapshot(db_session):
+    account, connection = seed_connection(db_session)
+    settings = Settings(master_encryption_key=TEST_KEY)
+    end = datetime.now(timezone.utc)
+
+    run = HyperliquidSyncService(db_session, settings, client_factory=FakeHyperliquidClient).run(
+        connection.id,
+        HyperliquidSyncRequest(history_start=end - timedelta(days=1), history_end=end, include_spot=False),
+    )
+    assert run.status == SyncRunStatus.SUCCEEDED
+
+    snapshot = DashboardService(db_session).capture_snapshot(account.portfolio_id, end)
+    summary = DashboardService(db_session).summary(account.portfolio_id, run_id=snapshot.source_cost_run_id)
+
+    assert snapshot.perp_equity == 1000
+    assert snapshot.total_nav == 1000
+    assert summary.perp_equity_usd == 1000
+    assert summary.total_net_worth_usd == 1000
+    assert summary.accounts[0].provider == "hyperliquid"
+
+
+def test_hyperliquid_spot_without_prices_keeps_perp_visible_and_nav_incomplete(db_session):
+    account, connection = seed_connection(db_session)
+    settings = Settings(master_encryption_key=TEST_KEY)
+    end = datetime.now(timezone.utc)
+
+    run = HyperliquidSyncService(db_session, settings, client_factory=FakeHyperliquidClient).run(
+        connection.id,
+        HyperliquidSyncRequest(history_start=end - timedelta(days=1), history_end=end, include_spot=True),
+    )
+    assert run.status == SyncRunStatus.SUCCEEDED
+
+    snapshot = DashboardService(db_session).capture_snapshot(account.portfolio_id, end)
+    summary = DashboardService(db_session).summary(account.portfolio_id, run_id=snapshot.source_cost_run_id)
+
+    assert snapshot.perp_equity == 1000
+    assert snapshot.total_nav is None
+    assert summary.perp_equity_usd == 1000
+    assert summary.total_net_worth_usd is None
+    assert summary.accounts[0].perp_equity_usd == 1000
+    assert summary.accounts[0].total_equity_usd is None
+    assert summary.accounts[0].valuation_complete is False
+    assert "Hyperliquid Perp equity is available" in " ".join(summary.health.warnings)
 
 
 def test_public_hyperliquid_connection_uses_account_address_without_api_key(client):

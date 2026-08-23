@@ -155,6 +155,15 @@ class DashboardService:
                 account_complete[account.id] = False
             warnings.append("One or more account balance snapshots are stale; current NAV was not calculated.")
 
+        unvalued_hyperliquid_spot = self._hyperliquid_spot_accounts(accounts, current_at)
+        if unvalued_hyperliquid_spot:
+            valuation_complete = False
+            for account_id in unvalued_hyperliquid_spot:
+                account_complete[account_id] = False
+            warnings.append(
+                "Hyperliquid Perp equity is available, but non-zero Spot balances still require USD prices."
+            )
+
         perp_equity = sum(derivative_values.values(), ZERO)
         if not all(derivative_complete.values()):
             valuation_complete = False
@@ -516,6 +525,12 @@ class DashboardService:
                     values[account.id] = equity.equity * multiplier
                     complete[account.id] = self._is_fresh(equity.as_of, as_of)
                 continue
+            # A successful Hyperliquid sync always writes an equity snapshot,
+            # including for a genuinely zero account. Without that evidence,
+            # treat the account as not synchronized yet instead of deriving a
+            # false/incomplete equity from its separate Spot balance rows.
+            if account.provider.lower() == "hyperliquid":
+                continue
             if not self._uses_authoritative_equity(account):
                 continue
             balance_value, balance_complete = self._latest_balance_value(account.id, as_of)
@@ -569,6 +584,37 @@ class DashboardService:
             else:
                 total += row.quantity * price
         return total, complete and self._is_fresh(latest_at, as_of)
+
+    def _hyperliquid_spot_accounts(self, accounts: list[Account], as_of: datetime) -> set[UUID]:
+        result: set[UUID] = set()
+        for account in accounts:
+            if account.provider.lower() != "hyperliquid":
+                continue
+            latest_at = self.session.scalar(
+                select(BalanceSnapshot.as_of)
+                .where(
+                    BalanceSnapshot.account_id == account.id,
+                    BalanceSnapshot.source == "hyperliquid:spot",
+                    BalanceSnapshot.as_of <= as_of,
+                )
+                .order_by(BalanceSnapshot.as_of.desc())
+                .limit(1)
+            )
+            if latest_at is None:
+                continue
+            nonzero = self.session.scalar(
+                select(BalanceSnapshot.id)
+                .where(
+                    BalanceSnapshot.account_id == account.id,
+                    BalanceSnapshot.source == "hyperliquid:spot",
+                    BalanceSnapshot.as_of == latest_at,
+                    BalanceSnapshot.quantity != ZERO,
+                )
+                .limit(1)
+            )
+            if nonzero:
+                result.add(account.id)
+        return result
 
     def _perp_unrealized(
         self,
@@ -1145,6 +1191,8 @@ class DashboardService:
 
     def _currency_price(self, symbol: str, at: datetime) -> Decimal | None:
         normalized = symbol.upper()
+        if normalized == "USD":
+            return Decimal("1")
         asset = self.session.scalar(select(Asset).where(Asset.canonical_symbol == normalized, Asset.chain_id.is_(None)).limit(1))
         return self._asset_price(asset, at) if asset else None
 
@@ -1167,10 +1215,12 @@ class DashboardService:
             return identity.endswith(":usdm") or identity.endswith(":coinm")
         if provider == "bitget":
             return any(identity.endswith(f":{product}") for product in ("usdt-futures", "usdc-futures", "coin-futures"))
-        # Bybit Unified equity already contains Spot and derivatives. Treat it
-        # as the authoritative NAV source so ledger cost positions are not
-        # counted a second time in the account total.
-        return provider == "bybit"
+        # Bybit Unified equity already contains Spot and derivatives.
+        # Hyperliquid marginSummary.accountValue is authoritative for its Perp
+        # clearinghouse. In both cases, do not count derivative cash-flow lots
+        # a second time as Spot inventory. Non-zero Hyperliquid Spot balances
+        # are surfaced separately as an incomplete-valuation warning.
+        return provider in {"bybit", "hyperliquid"}
 
     @staticmethod
     def _position_side(row: PositionSnapshot) -> str:

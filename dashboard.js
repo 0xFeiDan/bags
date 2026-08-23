@@ -302,7 +302,12 @@
       return;
     }
     const total = accounts.reduce((sum, account) => sum + (decimal(account.total_equity_usd) || 0), 0);
-    const rows = accounts.slice(0, 6).map((account) => `<div class="source-row"><span class="source-logo">${escapeHtml(initials(account.label))}</span><span class="source-name">${escapeHtml(account.label)}<small>${escapeHtml(account.provider)} · ${escapeHtml(account.kind)}</small></span><span class="source-value">${currency(account.total_equity_usd)}</span></div>`).join('');
+    const rows = accounts.slice(0, 6).map((account) => {
+      const value = account.total_equity_usd === null && decimal(account.perp_equity_usd) !== null
+        ? `${currency(account.perp_equity_usd)} Perp`
+        : currency(account.total_equity_usd);
+      return `<div class="source-row"><span class="source-logo">${escapeHtml(initials(account.label))}</span><span class="source-name">${escapeHtml(account.label)}<small>${escapeHtml(account.provider)} · ${escapeHtml(account.kind)}</small></span><span class="source-value">${value}</span></div>`;
+    }).join('');
     const colors = ['var(--blue)', 'var(--violet)', 'var(--green)', 'var(--gold)', 'var(--red)', 'var(--muted)'];
     const meter = accounts.slice(0, 6).map((account, index) => {
       const width = total > 0 ? ((decimal(account.total_equity_usd) || 0) / total) * 100 : 0;
@@ -425,7 +430,12 @@
 
   function accountList(accounts) {
     if (!accounts.length) return '<div class="live-empty">尚未连接账户。</div>';
-    return `<div class="account-list">${accounts.map((account) => `<div class="account-row"><span class="account-logo">${escapeHtml(initials(account.label))}</span><span><b>${escapeHtml(account.label)}</b><small>${escapeHtml(account.provider)} · ${escapeHtml(account.kind)} · ${escapeHtml(formatDate(account.last_synced_at))}</small></span><span><strong>${currency(account.total_equity_usd)}</strong><span class="tag" style="color:${account.valuation_complete ? 'var(--green)' : 'var(--gold)'}">${account.valuation_complete ? '已估值' : '数据待补'}</span></span></div>`).join('')}</div>`;
+    return `<div class="account-list">${accounts.map((account) => {
+      const value = account.total_equity_usd === null && decimal(account.perp_equity_usd) !== null
+        ? `${currency(account.perp_equity_usd)} Perp`
+        : currency(account.total_equity_usd);
+      return `<div class="account-row"><span class="account-logo">${escapeHtml(initials(account.label))}</span><span><b>${escapeHtml(account.label)}</b><small>${escapeHtml(account.provider)} · ${escapeHtml(account.kind)} · ${escapeHtml(formatDate(account.last_synced_at))}</small></span><span><strong>${value}</strong><span class="tag" style="color:${account.valuation_complete ? 'var(--green)' : 'var(--gold)'}">${account.valuation_complete ? '已估值' : '数据待补'}</span></span></div>`;
+    }).join('')}</div>`;
   }
 
   function historyChart(history) {
@@ -514,6 +524,20 @@
     }
   }
 
+  async function loadPortfolioSummary(portfolioId) {
+    try {
+      return await window.BagsAuth.api(`/dashboard/portfolios/${portfolioId}/summary`);
+    } catch (error) {
+      const missingCostRun = error.status === 422 && String(error.message).includes('Cost Basis Run');
+      if (!missingCostRun) throw error;
+      await window.BagsAuth.api(`/dashboard/portfolios/${portfolioId}/snapshots`, {
+        method: 'POST',
+        body: '{}',
+      });
+      return window.BagsAuth.api(`/dashboard/portfolios/${portfolioId}/summary`);
+    }
+  }
+
   async function loadDashboard() {
     primeLoadingState();
     try {
@@ -526,7 +550,7 @@
       const portfolio = portfolios.find((item) => item.id === saved) || portfolios[0];
       state.portfolioId = portfolio.id;
       localStorage.setItem('bags_portfolio_id', portfolio.id);
-      const summary = await window.BagsAuth.api(`/dashboard/portfolios/${portfolio.id}/summary`);
+      const summary = await loadPortfolioSummary(portfolio.id);
       const [groups, candidates, events] = await Promise.all([
         window.BagsAuth.api(`/transfers/portfolios/${portfolio.id}/groups?limit=20`).catch(() => []),
         window.BagsAuth.api(`/transfers/portfolios/${portfolio.id}/candidates?status=needs_review&limit=100`).catch(() => []),

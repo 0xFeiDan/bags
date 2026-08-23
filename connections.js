@@ -374,7 +374,26 @@
       raw_created: '新增原始事件', raw_existing: '已存在事件', ledger_created: '新增账本事件',
       balances_created: '余额快照', positions_created: '仓位快照', equity_created: '权益快照', transfers_created: '转账事件',
       token_balances_created: '代币余额', transactions_scanned: '扫描交易', blocks_scanned: '扫描区块',
+      dashboard_snapshot_created: '仪表盘快照',
     }[key] || key.replaceAll('_', ' ');
+  }
+
+  async function refreshPortfolioSnapshot(portfolioId, run) {
+    if (!run || run.status === 'failed') return run;
+    try {
+      await BagsAuth.api(`/dashboard/portfolios/${portfolioId}/snapshots`, {
+        method: 'POST',
+        body: '{}',
+      });
+      run.stats_json = { ...(run.stats_json || {}), dashboard_snapshot_created: 1 };
+    } catch (error) {
+      run.status = 'partial';
+      run.warnings_json = [
+        ...(run.warnings_json || []),
+        `真实数据已同步，但仪表盘快照生成失败：${error.message}`,
+      ];
+    }
+    return run;
   }
 
   function renderResult(run, fallbackError = '') {
@@ -417,9 +436,19 @@
       });
       stage = 'sync';
       setBusy(true, state.mode === 'update' ? '正在更新并同步…' : '正在创建并同步…');
-      const run = state.mode === 'update'
-        ? await updateAndSync()
-        : await createAndSync(await ensurePortfolio());
+      let portfolioId;
+      let run;
+      if (state.mode === 'update') {
+        const connection = state.connections.find((item) => item.id === state.editConnectionId);
+        const account = state.accounts.find((item) => item.id === connection?.account_id);
+        if (!account) throw new Error('找不到连接所属的 Portfolio，请刷新页面后重试。');
+        portfolioId = account.portfolio_id;
+        run = await updateAndSync();
+      } else {
+        portfolioId = await ensurePortfolio();
+        run = await createAndSync(portfolioId);
+      }
+      await refreshPortfolioSnapshot(portfolioId, run);
       clearSensitiveInputs();
       renderResult(run);
       await refreshData();
@@ -533,6 +562,7 @@
       } else {
         throw new Error('这个账户缺少可用的只读连接。');
       }
+      await refreshPortfolioSnapshot(account.portfolio_id, run);
       await refreshData();
       setSystemState(run.status === 'failed' ? `${account.label} 同步失败，请查看状态详情` : `${account.label} 同步完成`, run.status === 'failed' ? 'error' : 'ready');
       dispatchEvent(new CustomEvent('bags:data-changed'));
