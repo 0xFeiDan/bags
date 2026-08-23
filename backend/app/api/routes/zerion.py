@@ -10,13 +10,7 @@ from app.connectors.zerion.sync import ZerionShadowSyncService, ZerionSyncReject
 from app.core.config import Settings, get_settings
 from app.db import get_session
 from app.models import Account, AccountDataSource, AccountKind, DataSourceMode, ProviderSyncRun
-from app.schemas import (
-    ProviderSyncRunRead,
-    ZerionDataSourceRead,
-    ZerionDataSourceUpsert,
-    ZerionShadowSyncRequest,
-    ZerionStatusRead,
-)
+from app.schemas import ProviderSyncRunRead, ZerionDataSourceRead, ZerionDataSourceUpsert, ZerionShadowSyncRequest
 from app.services.security import add_security_event
 
 router = APIRouter()
@@ -56,26 +50,6 @@ def _serialize(source: AccountDataSource, settings: Settings) -> ZerionDataSourc
         zerion_configured=bool(settings.zerion_enabled and settings.zerion_api_key),
         created_at=source.created_at,
         updated_at=source.updated_at,
-    )
-
-
-@router.get("/status", response_model=ZerionStatusRead)
-def get_status() -> ZerionStatusRead:
-    settings = get_settings()
-    daily_limit = max(1, min(settings.zerion_daily_request_limit, FREE_DAILY_REQUEST_LIMIT))
-    return ZerionStatusRead(
-        configured=bool(settings.zerion_enabled and settings.zerion_api_key),
-        requests_per_second_limit=max(
-            1,
-            min(settings.zerion_requests_per_second_limit, FREE_REQUESTS_PER_SECOND_LIMIT),
-        ),
-        daily_request_limit=daily_limit,
-        daily_request_budget=max(
-            1,
-            min(settings.zerion_daily_request_budget, daily_limit, FREE_DAILY_REQUEST_BUDGET),
-        ),
-        max_requests_per_run=max(1, min(settings.zerion_max_requests_per_run, FREE_MAX_REQUESTS_PER_RUN)),
-        min_sync_interval_seconds=max(settings.zerion_min_sync_interval_seconds, FREE_MIN_SYNC_INTERVAL_SECONDS),
     )
 
 

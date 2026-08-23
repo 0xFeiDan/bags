@@ -188,42 +188,6 @@
       </div>
     </section>
 
-    <section class="zerion-section" aria-labelledby="zerionTitle">
-      <div class="zerion-head">
-        <div>
-          <h2 id="zerionTitle">Zerion 链上数据层</h2>
-          <p>为已有 EVM 钱包启用隔离 Shadow 采集。数据只进入 RawEvent，不会写入 Ledger。</p>
-        </div>
-        <span class="zerion-badge checking" id="zerionStatusBadge" role="status" aria-live="polite">正在检查…</span>
-      </div>
-
-      <div class="zerion-overview" id="zerionOverview" aria-label="Zerion 配额与安全边界">
-        <div class="loading-row">正在读取服务器配置…</div>
-      </div>
-
-      <div class="zerion-message" id="zerionMessage" role="status" aria-live="polite" hidden></div>
-
-      <div class="zerion-auth" id="zerionAuthPanel" hidden>
-        <div class="zerion-auth-copy">
-          <h3 id="zerionAuthTitle">确认 Zerion 操作</h3>
-          <p id="zerionAuthDescription">此操作需要重新验证当前管理员身份。</p>
-        </div>
-        <div class="zerion-auth-fields">
-          <label class="field"><span>当前登录密码</span><input id="zerionVerifyPassword" type="password" autocomplete="current-password" /></label>
-          <label class="field" id="zerionVerifyTotpField" hidden><span>六位 TOTP 验证码</span><input id="zerionVerifyTotp" inputmode="numeric" pattern="^\d{6}$" maxlength="6" autocomplete="one-time-code" /></label>
-        </div>
-        <div class="zerion-auth-actions">
-          <button class="secondary-action compact" id="cancelZerionAction" type="button">取消</button>
-          <button class="primary-action compact" id="confirmZerionAction" type="button">验证并继续</button>
-        </div>
-        <div class="form-message" id="zerionAuthMessage" role="alert"></div>
-      </div>
-
-      <div class="zerion-accounts" id="zerionAccounts">
-        <div class="loading-row">正在读取 EVM 钱包…</div>
-      </div>
-    </section>
-
     <section class="connections-section" aria-labelledby="connectionsTitle">
       <div class="section-head"><div><h2 id="connectionsTitle">连接与同步状态</h2><p>这里显示真实账户、最近一次同步和可恢复操作。</p></div><button class="secondary-action compact" id="refreshConnections" type="button">刷新状态</button></div>
       <div class="connections-list" id="connectionsList"><div class="loading-row">正在读取账户…</div></div>

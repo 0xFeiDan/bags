@@ -200,48 +200,6 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .warnings { margin: 14px 0 0; padding: 0; display: grid; gap: 6px; list-style: none; }
 .warnings li { padding: 9px 10px; border-radius: 8px; background: var(--gold-bg); color: #ffe2a7; font-size: 9px; overflow-wrap: anywhere; }
 
-.zerion-section { margin-top: 18px; padding: 22px; border: 1px solid rgba(168, 154, 255, .2); border-radius: 16px; background: linear-gradient(145deg, rgba(20, 25, 39, .9), rgba(11, 14, 23, .96)); }
-.zerion-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
-.zerion-head h2 { margin: 0; font-size: 15px; }
-.zerion-head p { max-width: 68ch; margin: 4px 0 0; color: var(--dim); font-size: 9px; }
-.zerion-badge { min-height: 30px; padding: 0 10px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font: 500 9px var(--mono); white-space: nowrap; }
-.zerion-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--gold); }
-.zerion-badge.configured { border-color: rgba(85, 229, 155, .24); color: #c8ffdf; }
-.zerion-badge.configured::before { background: var(--green); }
-.zerion-badge.unconfigured { border-color: rgba(255, 121, 141, .24); color: #ffc3cc; }
-.zerion-badge.unconfigured::before { background: var(--red); }
-.zerion-overview { margin-top: 18px; padding-block: 14px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-block: 1px solid var(--line-soft); }
-.zerion-metric { min-width: 0; padding-inline: 16px; }
-.zerion-metric:first-child { padding-inline-start: 0; }
-.zerion-metric + .zerion-metric { border-inline-start: 1px solid var(--line-soft); }
-.zerion-metric small { display: block; color: var(--dim); font-size: 8px; }
-.zerion-metric b { display: block; margin-top: 4px; overflow-wrap: anywhere; font: 500 11px var(--mono); }
-.zerion-message { margin-top: 14px; padding: 10px 12px; border: 1px solid rgba(124, 194, 255, .24); border-radius: 9px; background: rgba(124, 194, 255, .07); color: #c9e8ff; font-size: 9px; overflow-wrap: anywhere; }
-.zerion-message.success { border-color: rgba(85, 229, 155, .25); background: var(--green-bg); color: #c8ffdf; }
-.zerion-message.error { border-color: rgba(255, 121, 141, .25); background: var(--red-bg); color: #ffc3cc; }
-.zerion-auth { margin-top: 14px; padding: 16px; display: grid; grid-template-columns: minmax(180px, .8fr) minmax(280px, 1.2fr) auto; align-items: end; gap: 16px; border: 1px solid rgba(168, 154, 255, .28); border-radius: 12px; background: rgba(168, 154, 255, .07); }
-.zerion-auth-copy { align-self: center; min-width: 0; }
-.zerion-auth-copy h3 { margin: 0; font-size: 12px; }
-.zerion-auth-copy p { margin: 4px 0 0; color: var(--muted); font-size: 9px; overflow-wrap: anywhere; }
-.zerion-auth-fields { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.zerion-auth-fields:not(.with-totp) > .field:first-child { grid-column: 1 / -1; }
-.zerion-auth-actions { display: flex; gap: 7px; }
-.zerion-auth .form-message { grid-column: 2 / -1; margin: 0; }
-.zerion-accounts { margin-top: 10px; }
-.zerion-row { min-height: 78px; padding: 13px 0; display: grid; grid-template-columns: 38px minmax(160px, 1.1fr) minmax(140px, .9fr) minmax(190px, 1.2fr) auto; align-items: center; gap: 12px; border-top: 1px solid var(--line-soft); }
-.zerion-row:first-child { border-top: 0; }
-.source-mark.zerion { color: #d7d1ff; background: var(--violet-bg); }
-.zerion-account-main, .zerion-source-state, .zerion-run-state { min-width: 0; }
-.zerion-account-main b, .zerion-source-state b { display: block; font-size: 10px; overflow-wrap: anywhere; }
-.zerion-account-main small, .zerion-source-state small, .zerion-run-state small { display: block; margin-top: 3px; color: var(--dim); font: 9px var(--mono); overflow-wrap: anywhere; }
-.zerion-run-state b { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 9px; }
-.zerion-run-state b::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--dim); }
-.zerion-run-state b.succeeded::before { background: var(--green); }
-.zerion-run-state b.partial::before { background: var(--gold); }
-.zerion-run-state b.failed::before { background: var(--red); }
-.zerion-actions { display: flex; justify-content: flex-end; gap: 7px; }
-.zerion-actions .row-action { white-space: nowrap; }
-
 .connections-section { margin-top: 18px; padding: 22px; border: 1px solid var(--line-soft); border-radius: 16px; background: rgba(14, 18, 29, .76); }
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .section-head h2 { margin: 0; font-size: 15px; }
@@ -276,15 +234,6 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .source-option { min-height: 72px; grid-template-columns: 38px minmax(0, 1fr) auto; }
   .source-option em { grid-column: auto; }
   .form-section { grid-template-columns: 1fr; gap: 14px; }
-  .zerion-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .zerion-metric:nth-child(3) { padding-inline-start: 0; border-inline-start: 0; }
-  .zerion-metric:nth-child(n+3) { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
-  .zerion-auth { grid-template-columns: 1fr; align-items: stretch; }
-  .zerion-auth .form-message { grid-column: 1; }
-  .zerion-auth-actions { justify-content: flex-start; }
-  .zerion-row { grid-template-columns: 36px minmax(0, 1fr) auto; }
-  .zerion-source-state, .zerion-run-state { grid-column: 2 / -1; }
-  .zerion-actions { grid-column: 2 / -1; justify-content: flex-start; }
   .connection-row { grid-template-columns: 36px minmax(0, 1fr) auto; }
   .connection-meta, .connection-status { grid-column: 2 / -1; }
   .row-actions { grid-column: 2 / -1; justify-content: flex-start; }
@@ -310,19 +259,6 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .step-actions { align-items: stretch; flex-direction: column-reverse; }
   .step-actions > * { width: 100%; }
   .connections-section { padding: 17px 14px; }
-  .zerion-section { padding: 17px 14px; }
-  .zerion-head { align-items: flex-start; flex-direction: column; }
-  .zerion-overview { grid-template-columns: 1fr; }
-  .zerion-metric { padding: 10px 0; }
-  .zerion-metric + .zerion-metric { border-inline-start: 0; border-top: 1px solid var(--line-soft); }
-  .zerion-metric:nth-child(n+3) { margin-top: 0; }
-  .zerion-auth-fields { grid-template-columns: 1fr; }
-  .zerion-auth-actions { align-items: stretch; flex-direction: column-reverse; }
-  .zerion-auth-actions > * { width: 100%; }
-  .zerion-row { grid-template-columns: 34px minmax(0, 1fr); }
-  .zerion-row > :not(.source-mark) { grid-column: 2; }
-  .zerion-actions { grid-column: 1 / -1; }
-  .zerion-actions .row-action { min-width: 44px; min-height: 44px; padding-inline: 12px; }
   .section-head { align-items: flex-start; }
   .connection-row { grid-template-columns: 34px minmax(0, 1fr); }
   .connection-row > :not(.source-mark) { grid-column: 2; }

@@ -11,11 +11,6 @@
     accounts: [],
     connections: [],
     chains: [],
-    zerionStatus: null,
-    zerionSources: new Map(),
-    zerionRuns: new Map(),
-    zerionPendingAction: null,
-    zerionBusy: false,
   };
 
   const byId = (id) => document.getElementById(id);
@@ -586,214 +581,6 @@
     return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleString('zh-CN', { hour12: false });
   }
 
-  function compactAddress(value) {
-    const address = String(value || '');
-    return address.length > 18 ? `${address.slice(0, 8)}…${address.slice(-6)}` : address || '地址未知';
-  }
-
-  function zerionEvmAccounts() {
-    return state.accounts.filter((account) => account.provider === 'evm');
-  }
-
-  function setZerionMessage(message, kind = '') {
-    const node = byId('zerionMessage');
-    node.hidden = !message;
-    node.textContent = message || '';
-    node.className = `zerion-message ${kind}`.trim();
-  }
-
-  function zerionRunStatus(run) {
-    if (!run) return ['never', '尚未同步'];
-    return [run.status || 'never', {
-      succeeded: 'Shadow 同步成功',
-      partial: 'Shadow 部分完成',
-      failed: 'Shadow 同步失败',
-      running: 'Shadow 同步中',
-    }[run.status] || '状态未知'];
-  }
-
-  function remainingCooldownMinutes(value) {
-    const timestamp = Date.parse(value || '');
-    if (!Number.isFinite(timestamp)) return 0;
-    return Math.max(0, Math.ceil((timestamp - Date.now()) / 60000));
-  }
-
-  function renderZerionPanel() {
-    const status = state.zerionStatus;
-    const configured = Boolean(status?.configured);
-    const badge = byId('zerionStatusBadge');
-    badge.className = `zerion-badge ${configured ? 'configured' : 'unconfigured'}`;
-    badge.textContent = configured ? '服务器已配置' : '服务器未配置';
-
-    byId('zerionOverview').innerHTML = status ? `
-      <div class="zerion-metric"><small>请求频率</small><b>${escapeHtml(status.requests_per_second_limit)} 次 / 秒</b></div>
-      <div class="zerion-metric"><small>每日预算</small><b>${escapeHtml(status.daily_request_budget)} / ${escapeHtml(status.daily_request_limit)}</b></div>
-      <div class="zerion-metric"><small>单次同步上限</small><b>${escapeHtml(status.max_requests_per_run)} 次请求</b></div>
-      <div class="zerion-metric"><small>账户同步间隔</small><b>至少 ${escapeHtml(Math.ceil(status.min_sync_interval_seconds / 60))} 分钟</b></div>
-    ` : '<div class="empty-row">暂时无法读取 Zerion 服务状态。</div>';
-
-    const accounts = zerionEvmAccounts();
-    if (!accounts.length) {
-      byId('zerionAccounts').innerHTML = '<div class="empty-row">还没有 EVM 地址。请先通过上方连接向导添加公开钱包地址。</div>';
-      return;
-    }
-
-    byId('zerionAccounts').innerHTML = accounts.map((account) => {
-      const source = state.zerionSources.get(account.id) || null;
-      const run = state.zerionRuns.get(account.id) || null;
-      const enabled = Boolean(source?.is_enabled);
-      const cooldownMinutes = remainingCooldownMinutes(source?.next_sync_after);
-      const [runStatus, runStatusText] = zerionRunStatus(run);
-      const stats = run?.stats_json || {};
-      const rawCount = Number(stats.raw_created || 0) + Number(stats.raw_existing || 0);
-      const runDetail = run
-        ? `${Number(stats.request_count || run.request_count || 0)} 请求 · ${rawCount} Raw · Ledger ${Number(stats.ledger_created || 0)}`
-        : '尚无 Zerion Shadow 运行记录';
-      const sourceTitle = enabled ? 'Shadow 已启用' : source ? 'Shadow 已停用' : '尚未配置';
-      const sourceDetail = enabled
-        ? `仅写 RawEvent${cooldownMinutes ? ` · 冷却 ${cooldownMinutes} 分钟` : ''}`
-        : configured ? '可启用为影子数据源' : '需要服务器环境变量';
-      const syncDisabled = state.zerionBusy || !configured || !enabled || cooldownMinutes > 0;
-      const toggleDisabled = state.zerionBusy || (!configured && !enabled);
-      return `<article class="zerion-row" data-zerion-account="${escapeHtml(account.id)}">
-        <span class="source-mark zerion" aria-hidden="true">ZR</span>
-        <div class="zerion-account-main"><b>${escapeHtml(account.label)}</b><small>${escapeHtml(account.chain_id ? `Chain ${account.chain_id} · ` : '')}${escapeHtml(compactAddress(account.address))}</small></div>
-        <div class="zerion-source-state"><b>${escapeHtml(sourceTitle)}</b><small>${escapeHtml(sourceDetail)}</small></div>
-        <div class="zerion-run-state"><b class="${escapeHtml(runStatus)}">${escapeHtml(runStatusText)}</b><small>${escapeHtml(runDetail)} · ${escapeHtml(formatDate(run?.finished_at || run?.started_at))}</small></div>
-        <div class="zerion-actions">
-          <button class="row-action" data-zerion-action="${enabled ? 'disable' : 'enable'}" data-account-id="${escapeHtml(account.id)}" type="button" ${toggleDisabled ? 'disabled' : ''}>${enabled ? '停用' : '启用'}</button>
-          <button class="row-action primary" data-zerion-action="sync" data-account-id="${escapeHtml(account.id)}" type="button" ${syncDisabled ? 'disabled' : ''}>${cooldownMinutes ? `${cooldownMinutes} 分钟后` : 'Shadow 同步'}</button>
-        </div>
-      </article>`;
-    }).join('');
-  }
-
-  async function refreshZerionData() {
-    try {
-      state.zerionStatus = await BagsAuth.api('/zerion/status');
-      const rows = await Promise.all(zerionEvmAccounts().map(async (account) => {
-        let source = null;
-        let run = null;
-        try {
-          source = await BagsAuth.api(`/zerion/accounts/${account.id}/source`);
-        } catch (error) {
-          if (error.status !== 404) throw error;
-        }
-        try {
-          run = (await BagsAuth.api(`/zerion/accounts/${account.id}/sync-runs?limit=1`))[0] || null;
-        } catch (error) {
-          if (error.status !== 404) throw error;
-        }
-        return { accountId: account.id, source, run };
-      }));
-      state.zerionSources = new Map(rows.map((row) => [row.accountId, row.source]));
-      state.zerionRuns = new Map(rows.map((row) => [row.accountId, row.run]));
-      renderZerionPanel();
-    } catch (error) {
-      state.zerionStatus = null;
-      state.zerionSources = new Map();
-      state.zerionRuns = new Map();
-      renderZerionPanel();
-      setZerionMessage(`Zerion 状态读取失败：${error.message}`, 'error');
-    }
-  }
-
-  function closeZerionAuth() {
-    state.zerionPendingAction = null;
-    byId('zerionAuthPanel').hidden = true;
-    byId('zerionVerifyPassword').value = '';
-    byId('zerionVerifyTotp').value = '';
-    setMessage('zerionAuthMessage', '');
-  }
-
-  function openZerionAuth(type, accountId) {
-    if (state.zerionBusy) return;
-    const account = state.accounts.find((item) => item.id === accountId && item.provider === 'evm');
-    const source = state.zerionSources.get(accountId);
-    if (!account) return;
-    if (type === 'sync' && !source?.is_enabled) {
-      setZerionMessage('请先启用该账户的 Zerion Shadow 数据源。', 'error');
-      return;
-    }
-    const labels = {
-      enable: ['启用 Zerion Shadow', `为“${account.label}”启用只写 RawEvent 的影子数据源。`],
-      disable: ['停用 Zerion Shadow', `停用“${account.label}”的 Zerion 数据源，不删除已有 RawEvent。`],
-      sync: ['运行 Zerion Shadow 同步', `同步“${account.label}”，结果只进入 RawEvent，不写入 Ledger。`],
-    };
-    const [title, description] = labels[type] || labels.sync;
-    state.zerionPendingAction = { type, accountId };
-    byId('zerionAuthTitle').textContent = title;
-    byId('zerionAuthDescription').textContent = description;
-    byId('confirmZerionAction').textContent = { enable: '验证并启用', disable: '验证并停用', sync: '验证并同步' }[type];
-    const needsTotp = Boolean(state.user?.two_factor_enabled);
-    byId('zerionVerifyTotpField').hidden = !needsTotp;
-    byId('zerionAuthPanel').querySelector('.zerion-auth-fields').classList.toggle('with-totp', needsTotp);
-    byId('zerionAuthPanel').hidden = false;
-    setMessage('zerionAuthMessage', '');
-    byId('zerionVerifyPassword').focus({ preventScroll: true });
-    byId('zerionAuthPanel').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'nearest' });
-  }
-
-  function zerionErrorMessage(error) {
-    if (error.status === 429) return '该账户仍在同步冷却期，请等待倒计时结束后重试。';
-    if (error.status === 503) return '服务器尚未配置 Zerion。请先在 .env 中填写密钥并启用服务。';
-    return error.message;
-  }
-
-  async function confirmZerionAction() {
-    const pending = state.zerionPendingAction;
-    if (!pending || state.zerionBusy) return;
-    const password = byId('zerionVerifyPassword').value;
-    const totp = byId('zerionVerifyTotp').value.trim();
-    if (!password || (state.user?.two_factor_enabled && !/^\d{6}$/.test(totp))) {
-      setMessage('zerionAuthMessage', state.user?.two_factor_enabled ? '请输入当前密码和六位 TOTP 验证码。' : '请输入当前登录密码。');
-      return;
-    }
-
-    state.zerionBusy = true;
-    const button = byId('confirmZerionAction');
-    button.disabled = true;
-    button.textContent = '正在验证…';
-    setMessage('zerionAuthMessage', '');
-    renderZerionPanel();
-    try {
-      await BagsAuth.api('/auth/sensitive/verify', {
-        method: 'POST',
-        body: JSON.stringify({ current_password: password, totp_code: totp || null }),
-      });
-      button.textContent = pending.type === 'sync' ? '正在同步…' : '正在保存…';
-      let result = null;
-      if (pending.type === 'sync') {
-        result = await BagsAuth.api(`/zerion/accounts/${pending.accountId}/shadow-sync`, { method: 'POST', body: '{}' });
-      } else {
-        result = await BagsAuth.api(`/zerion/accounts/${pending.accountId}/source`, {
-          method: 'PUT',
-          body: JSON.stringify({ is_enabled: pending.type === 'enable', mode: pending.type === 'enable' ? 'shadow' : 'disabled' }),
-        });
-      }
-      closeZerionAuth();
-      state.zerionBusy = false;
-      await refreshZerionData();
-      if (pending.type === 'sync') {
-        const stats = result.stats_json || {};
-        const rawCount = Number(stats.raw_created || 0) + Number(stats.raw_existing || 0);
-        setZerionMessage(`Shadow 同步${result.status === 'failed' ? '失败' : '完成'}：${Number(stats.request_count || result.request_count || 0)} 次请求，${rawCount} 条 RawEvent，Ledger 新增 ${Number(stats.ledger_created || 0)}。`, result.status === 'failed' ? 'error' : 'success');
-      } else {
-        setZerionMessage(pending.type === 'enable' ? 'Zerion Shadow 已启用。现在可以手动运行首次同步。' : 'Zerion Shadow 已停用，历史 RawEvent 已保留。', 'success');
-      }
-      dispatchEvent(new CustomEvent('bags:data-changed'));
-    } catch (error) {
-      setMessage('zerionAuthMessage', zerionErrorMessage(error));
-    } finally {
-      state.zerionBusy = false;
-      button.disabled = false;
-      if (state.zerionPendingAction) button.textContent = { enable: '验证并启用', disable: '验证并停用', sync: '验证并同步' }[state.zerionPendingAction.type];
-      renderZerionPanel();
-      byId('zerionVerifyPassword').value = '';
-      byId('zerionVerifyTotp').value = '';
-    }
-  }
-
   async function latestRun(account, connection) {
     try {
       let path;
@@ -858,7 +645,6 @@
     populatePortfolios();
     populateChains();
     await renderConnections();
-    await refreshZerionData();
     const configured = chains.filter((chain) => chain.configured).length;
     setSystemState(`API 正常 · ${accounts.length} 个账户 · ${configured} 条 EVM 网络可用`, 'ready');
   }
@@ -953,18 +739,6 @@
       const rotate = event.target.closest('[data-rotate]');
       if (rotate) startCredentialRotation(rotate.dataset.rotate);
     });
-    byId('zerionAccounts').addEventListener('click', (event) => {
-      const action = event.target.closest('[data-zerion-action]');
-      if (action && !action.disabled) openZerionAuth(action.dataset.zerionAction, action.dataset.accountId);
-    });
-    byId('cancelZerionAction').addEventListener('click', closeZerionAuth);
-    byId('confirmZerionAction').addEventListener('click', confirmZerionAction);
-    [byId('zerionVerifyPassword'), byId('zerionVerifyTotp')].forEach((input) => input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        confirmZerionAction();
-      }
-    }));
     updateSourceForms();
     try {
       await refreshData();
