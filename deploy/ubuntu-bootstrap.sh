@@ -102,7 +102,12 @@ if [[ "${fresh_env}" == true && -z "${bootstrap_token}" ]]; then
 fi
 
 set_env_value BAGS_API_BIND 127.0.0.1
-set_env_value AUTH_COOKIE_SECURE false
+app_env="$(env_value APP_ENV)"
+if [[ "${app_env,,}" == "production" ]]; then
+  set_env_value AUTH_COOKIE_SECURE true
+else
+  set_env_value AUTH_COOKIE_SECURE false
+fi
 chmod 600 "${ENV_FILE}"
 
 docker compose config --quiet

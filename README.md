@@ -35,6 +35,20 @@ container bound to localhost. Use the SSH tunnel printed by the script. After
 creating the administrator, run the same script once more; it detects the user and
 removes `AUTH_BOOTSTRAP_TOKEN` automatically.
 
+For a public production domain, first point a DNS-only A record at the server and
+open TCP 80/443 in the cloud security group. Then run as root:
+
+```bash
+./deploy/ubuntu-production.sh example.com 203.0.113.10
+```
+
+The production script keeps PostgreSQL, Redis, the API, and the UI on localhost,
+switches authentication to secure same-origin cookies, installs the official Ubuntu
+Caddy package, and enables automatic HTTPS. It binds Caddy to the primary cloud
+interface instead of a Tailscale address, so an existing Tailscale HTTPS listener can
+remain active. Keep Cloudflare in DNS-only mode during setup; if proxying is enabled
+later, use Full (strict), never Flexible.
+
 ## Security V1
 
 - The first registration requires `AUTH_BOOTSTRAP_TOKEN`, creates the only
