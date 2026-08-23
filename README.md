@@ -19,6 +19,22 @@ The static UI remains at `http://127.0.0.1:4173` when run with `node preview-ser
 The dashboard, login page, and security page use cookie authentication against
 `/api/v1`. API docs remain available in development at `http://127.0.0.1:8000/docs`.
 
+## Ubuntu one-shot startup
+
+On an Ubuntu host with Docker, Docker Compose v2, OpenSSL, and curl installed:
+
+```bash
+chmod +x deploy/ubuntu-bootstrap.sh
+./deploy/ubuntu-bootstrap.sh
+```
+
+The script creates `.env` without overwriting existing secrets, generates the
+database password, AES-256-GCM key, and first-admin bootstrap token when needed,
+runs migrations, starts PostgreSQL/Redis/API, and builds a restricted frontend
+container bound to localhost. Use the SSH tunnel printed by the script. After
+creating the administrator, run the same script once more; it detects the user and
+removes `AUTH_BOOTSTRAP_TOKEN` automatically.
+
 ## Security V1
 
 - The first registration requires `AUTH_BOOTSTRAP_TOKEN`, creates the only

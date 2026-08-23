@@ -1,0 +1,16 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+.agents
+.codex
+agent-skills-audit
+code-review-skill-audit
+backend/.venv
+backend/.pytest_cache
+**/__pycache__
+*.pyc
+*.db
+*.sqlite*
+*.log
