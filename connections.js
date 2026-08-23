@@ -73,18 +73,26 @@
     byId('portfolioName').required = creating;
   }
 
+  function selectedEvmChains() {
+    const selected = new Set(
+      [...document.querySelectorAll('input[name="evmChain"]:checked')].map((input) => input.value),
+    );
+    return state.chains.filter((chain) => chain.configured && selected.has(chain.key));
+  }
+
   function populateChains() {
     const configured = state.chains.filter((chain) => chain.configured);
-    byId('evmChain').innerHTML = configured.length
-      ? configured.map((chain) => `<option value="${escapeHtml(chain.key)}">${escapeHtml(chain.name)} · ${escapeHtml(chain.native_symbol)}</option>`).join('')
-      : '<option value="">服务器尚未配置 EVM RPC</option>';
-    byId('evmChain').disabled = !configured.length;
+    const previous = new Set(selectedEvmChains().map((chain) => chain.key));
+    if (!previous.size && configured.length) previous.add(configured[0].key);
+    byId('evmChains').innerHTML = configured.length
+      ? configured.map((chain) => `<label class="chain-option"><input type="checkbox" name="evmChain" value="${escapeHtml(chain.key)}" ${previous.has(chain.key) ? 'checked' : ''} /><span><b>${escapeHtml(chain.name)}</b><small>Chain ${escapeHtml(chain.chain_id)} · ${escapeHtml(chain.native_symbol)}</small></span></label>`).join('')
+      : '<div class="empty-row">服务器尚未配置 EVM RPC</div>';
     const source = byId('evmSourceOption');
     source.classList.toggle('unavailable', !configured.length);
     source.querySelector('input').disabled = !configured.length;
     byId('evmSourceStatus').textContent = configured.length ? `${configured.length} 条网络可用` : 'RPC 未配置';
     byId('evmChainHelp').textContent = configured.length
-      ? `可用网络：${configured.map((chain) => chain.name).join('、')}`
+      ? '勾选需要读取的网络；每条链会建立独立账户并依次同步。'
       : '请先在服务器 .env 配置至少一个 EVM_*_RPC_URL，再重启 API。';
   }
 
@@ -149,8 +157,8 @@
         scope: byId('hyperliquidSpot').checked ? 'Perp · Spot · Funding' : 'Perp · Funding',
       };
     }
-    const chain = state.chains.find((item) => item.key === byId('evmChain').value);
-    return { label: byId('evmLabel').value.trim(), scope: chain?.name || 'EVM' };
+    const chains = selectedEvmChains();
+    return { label: byId('evmLabel').value.trim(), scope: chains.map((chain) => chain.name).join(' · ') || '未选择网络' };
   }
 
   function showReview() {
@@ -164,7 +172,11 @@
       ['读取范围', summary.scope],
       ['Portfolio', portfolio || '—'],
       ['权限', '只读'],
-      ['操作', state.mode === 'update' ? '替换凭据并同步' : '创建并首次同步'],
+      ['操作', state.mode === 'update'
+        ? '替换凭据并同步'
+        : state.source === 'evm' && selectedEvmChains().length > 1
+          ? `创建 ${selectedEvmChains().length} 个链账户并依次同步`
+          : '创建并首次同步'],
     ].map(([label, value]) => `<span><small>${escapeHtml(label)}</small><b>${escapeHtml(value)}</b></span>`).join('');
     byId('verifyTotpField').hidden = !state.user?.two_factor_enabled;
     byId('verifyTotp').required = Boolean(state.user?.two_factor_enabled);
@@ -188,16 +200,39 @@
       setMessage('detailsMessage', `至少选择一个 ${sourceName()} 产品。`);
       return false;
     }
-    if (state.source === 'evm' && !byId('evmChain').value) {
-      setMessage('detailsMessage', '服务器尚未配置可用的 EVM RPC。');
-      return false;
-    }
     if (state.source === 'evm') {
+      const chains = selectedEvmChains();
+      if (!chains.length) {
+        setMessage('detailsMessage', '至少选择一条已经配置 RPC 的 EVM 网络。');
+        byId('evmChains').querySelector('input')?.focus();
+        return false;
+      }
       const from = byId('evmFromBlock').value;
       const to = byId('evmToBlock').value;
       if (from && to && Number(from) > Number(to)) {
         setMessage('detailsMessage', '起始区块不能大于结束区块。');
         return false;
+      }
+      const hasBoundedBackfill = Boolean(
+        from || to || splitValues(byId('evmContracts').value).length || splitValues(byId('evmTransactions').value).length,
+      );
+      if (chains.length > 1 && hasBoundedBackfill) {
+        setMessage('detailsMessage', '多链同步不能共用同一组区块、合约或交易哈希。请先留空边界回填；需要精确回填时再逐链操作。');
+        return false;
+      }
+      const address = byId('evmAddress').value.trim().toLowerCase();
+      const portfolioId = selectedPortfolio();
+      if (portfolioId !== '__new__') {
+        const duplicates = chains.filter((chain) => state.accounts.some((account) => (
+          account.portfolio_id === portfolioId
+          && account.provider === 'evm'
+          && account.chain_id === chain.chain_id
+          && String(account.address || '').toLowerCase() === address
+        )));
+        if (duplicates.length) {
+          setMessage('detailsMessage', `该地址已连接：${duplicates.map((chain) => chain.name).join('、')}。请取消这些网络后继续。`);
+          return false;
+        }
       }
     }
     setMessage('detailsMessage', '');
@@ -256,6 +291,85 @@
     return provider === 'binance'
       ? `/binance/connections/${connectionId}/sync`
       : `/exchanges/${provider}/connections/${connectionId}/sync`;
+  }
+
+  function evmSyncPayload() {
+    const payload = {
+      token_contracts: splitValues(byId('evmContracts').value),
+      transaction_hashes: splitValues(byId('evmTransactions').value),
+    };
+    if (byId('evmFromBlock').value) payload.from_block = Number(byId('evmFromBlock').value);
+    if (byId('evmToBlock').value) payload.to_block = Number(byId('evmToBlock').value);
+    return payload;
+  }
+
+  function evmAccountLabel(baseLabel, chain, chainCount) {
+    if (chainCount === 1) return baseLabel;
+    const suffix = ` · ${chain.name}`;
+    return `${baseLabel.slice(0, Math.max(1, 120 - suffix.length))}${suffix}`;
+  }
+
+  function aggregateEvmRuns(results) {
+    const failed = results.filter((result) => result.error || result.run?.status === 'failed');
+    const partial = results.filter((result) => result.run?.status === 'partial');
+    const succeeded = results.length - failed.length;
+    const stats = {
+      networks_requested: results.length,
+      networks_succeeded: succeeded,
+      networks_failed: failed.length,
+    };
+    results.forEach(({ run }) => {
+      Object.entries(run?.stats_json || {}).forEach(([key, value]) => {
+        if (typeof value === 'number') stats[key] = (stats[key] || 0) + value;
+      });
+    });
+    const warnings = results.flatMap(({ chain, run, error }) => {
+      const messages = [
+        ...(run?.warnings_json || []),
+        ...(run?.failed_ranges_json?.length ? [`${run.failed_ranges_json.length} 个区块范围失败`] : []),
+      ];
+      if (error || run?.error_message) messages.unshift(error?.message || run.error_message);
+      return messages.map((message) => `${chain.name}：${typeof message === 'string' ? message : JSON.stringify(message)}`);
+    });
+    return {
+      status: failed.length === results.length ? 'failed' : (failed.length || partial.length ? 'partial' : 'succeeded'),
+      stats_json: stats,
+      warnings_json: warnings,
+      error_message: failed.length === results.length ? '所选网络均未同步成功，请查看各网络错误。' : null,
+      summary_message: `${succeeded}/${results.length} 条网络已完成首次同步。每条链均保存为独立只读账户。`,
+      multichain: results.length > 1,
+    };
+  }
+
+  async function createEvmAccountsAndSync(portfolioId) {
+    const chains = selectedEvmChains();
+    const address = byId('evmAddress').value.trim().toLowerCase();
+    const baseLabel = byId('evmLabel').value.trim();
+    const payload = evmSyncPayload();
+    const results = [];
+    for (const chain of chains) {
+      try {
+        const account = await BagsAuth.api('/accounts', {
+          method: 'POST',
+          body: JSON.stringify({
+            portfolio_id: portfolioId,
+            kind: 'wallet',
+            provider: 'evm',
+            label: evmAccountLabel(baseLabel, chain, chains.length),
+            chain_id: chain.key,
+            address,
+          }),
+        });
+        const run = await BagsAuth.api(`/evm/accounts/${account.id}/sync`, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        results.push({ chain, run });
+      } catch (error) {
+        results.push({ chain, error });
+      }
+    }
+    return aggregateEvmRuns(results);
   }
 
   async function createAndSync(portfolioId) {
@@ -331,24 +445,7 @@
       return BagsAuth.api(`/perp-dex/connections/${connection.id}/sync`, { method: 'POST', body: JSON.stringify(payload) });
     }
 
-    const account = await BagsAuth.api('/accounts', {
-      method: 'POST',
-      body: JSON.stringify({
-        portfolio_id: portfolioId,
-        kind: 'wallet',
-        provider: 'evm',
-        label: byId('evmLabel').value.trim(),
-        chain_id: byId('evmChain').value,
-        address: byId('evmAddress').value.trim().toLowerCase(),
-      }),
-    });
-    const payload = {
-      token_contracts: splitValues(byId('evmContracts').value),
-      transaction_hashes: splitValues(byId('evmTransactions').value),
-    };
-    if (byId('evmFromBlock').value) payload.from_block = Number(byId('evmFromBlock').value);
-    if (byId('evmToBlock').value) payload.to_block = Number(byId('evmToBlock').value);
-    return BagsAuth.api(`/evm/accounts/${account.id}/sync`, { method: 'POST', body: JSON.stringify(payload) });
+    return createEvmAccountsAndSync(portfolioId);
   }
 
   async function updateAndSync() {
@@ -376,6 +473,7 @@
       token_balances_created: '代币余额', transactions_scanned: '扫描交易', blocks_scanned: '扫描区块',
       dashboard_snapshot_created: '仪表盘快照',
       prices_created: '市场价格',
+      networks_requested: '选择网络', networks_succeeded: '同步成功网络', networks_failed: '同步失败网络',
     }[key] || key.replaceAll('_', ' ');
   }
 
@@ -401,8 +499,10 @@
     const status = run?.status || 'failed';
     const failed = status === 'failed';
     const partial = status === 'partial';
-    const title = failed ? '连接已保存，但同步失败' : partial ? '同步完成，存在覆盖缺口' : '首次同步完成';
-    const message = run?.error_message || fallbackError || (partial ? '部分来源未完成，原始失败范围已保留，可稍后重试。' : '真实数据已经写入不可变原始事件和标准化账本。');
+    const title = run?.multichain
+      ? (failed ? '多链连接失败' : partial ? '多链同步部分完成' : '多链首次同步完成')
+      : (failed ? '连接已保存，但同步失败' : partial ? '同步完成，存在覆盖缺口' : '首次同步完成');
+    const message = run?.error_message || fallbackError || run?.summary_message || (partial ? '部分来源未完成，原始失败范围已保留，可稍后重试。' : '真实数据已经写入不可变原始事件和标准化账本。');
     const stats = Object.entries(run?.stats_json || {}).slice(0, 8);
     const warnings = [...(run?.warnings_json || []), ...(run?.failed_ranges_json?.length ? [`${run.failed_ranges_json.length} 个链上区块范围失败`] : [])];
     byId('syncResult').innerHTML = `
@@ -436,7 +536,15 @@
         body: JSON.stringify({ current_password: password, totp_code: totp || null }),
       });
       stage = 'sync';
-      setBusy(true, state.mode === 'update' ? '正在更新并同步…' : '正在创建并同步…');
+      const evmChainCount = state.source === 'evm' ? selectedEvmChains().length : 0;
+      setBusy(
+        true,
+        state.mode === 'update'
+          ? '正在更新并同步…'
+          : evmChainCount > 1
+            ? `正在依次同步 ${evmChainCount} 条网络…`
+            : '正在创建并同步…',
+      );
       let portfolioId;
       let run;
       if (state.mode === 'update') {
@@ -600,6 +708,7 @@
     document.querySelector('input[name="source"][value="binance"]').checked = true;
     ['binanceLabel', 'bybitLabel', 'bitgetLabel'].forEach((id) => { byId(id).disabled = false; });
     byId('detailsForm').reset();
+    populateChains();
     document.querySelectorAll('input[name="binanceProduct"]').forEach((input) => { input.checked = true; });
     document.querySelectorAll('input[name="bybitProduct"], input[name="bitgetProduct"]').forEach((input) => { input.checked = true; });
     byId('hyperliquidSpot').checked = true;

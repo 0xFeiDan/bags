@@ -65,3 +65,15 @@ def test_sync_and_first_dashboard_load_build_real_accounting_snapshots():
     assert "async function loadPortfolioSummary(portfolioId)" in dashboard_script
     assert "`/dashboard/portfolios/${portfolioId}/snapshots`" in connections_script
     assert "`/dashboard/portfolios/${portfolioId}/snapshots`" in dashboard_script
+
+
+def test_evm_connection_wizard_supports_one_address_on_multiple_chains():
+    connections_markup = (PROJECT_ROOT / "connections.html").read_text(encoding="utf-8")
+    connections_script = (PROJECT_ROOT / "connections.js").read_text(encoding="utf-8")
+
+    assert 'type="checkbox" name="evmChain"' in connections_script
+    assert "function selectedEvmChains()" in connections_script
+    assert "async function createEvmAccountsAndSync(portfolioId)" in connections_script
+    assert "for (const chain of chains)" in connections_script
+    assert "chain_id: chain.key" in connections_script
+    assert "网络（可多选）" in connections_markup

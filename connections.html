@@ -154,8 +154,12 @@
             <div class="source-form" data-source-form="evm" hidden>
               <div class="form-grid two">
                 <label class="field"><span>钱包名称</span><input id="evmLabel" placeholder="请输入钱包名称" maxlength="120" required autocomplete="off" /></label>
-                <label class="field"><span>网络</span><select id="evmChain" required></select><small id="evmChainHelp">仅显示服务器已经配置 RPC 的网络。</small></label>
                 <label class="field span-two"><span>公开钱包地址</span><input id="evmAddress" pattern="^0x[a-fA-F0-9]{40}$" placeholder="0x…" required autocomplete="off" spellcheck="false" /></label>
+                <fieldset class="field chain-field span-two" aria-describedby="evmChainHelp">
+                  <legend>网络（可多选）</legend>
+                  <div class="chain-picker" id="evmChains"></div>
+                  <small id="evmChainHelp">仅显示服务器已经配置 RPC 的网络。</small>
+                </fieldset>
               </div>
               <div class="permission-callout good"><b>仅查询公开链上数据</b><span>Bags 不接受私钥或助记词，也没有签名和发送交易的能力。</span></div>
               <details class="advanced"><summary>边界回填（可选）</summary><div class="form-grid two"><label class="field"><span>起始区块</span><input id="evmFromBlock" type="number" min="0" inputmode="numeric" /></label><label class="field"><span>结束区块</span><input id="evmToBlock" type="number" min="0" inputmode="numeric" /></label><label class="field"><span>代币合约</span><textarea id="evmContracts" rows="3" placeholder="每行一个 0x 合约地址"></textarea></label><label class="field"><span>指定交易哈希</span><textarea id="evmTransactions" rows="3" placeholder="每行一个 0x 交易哈希"></textarea></label></div><p>首次建议留空，使用服务器的安全默认回看范围；大范围历史请分批回填。</p></details>
