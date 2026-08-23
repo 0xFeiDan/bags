@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const state = { summary: null, candidates: [], groups: [], portfolioId: null };
+  const state = { summary: null, candidates: [], groups: [], events: [], portfolioId: null };
   const currencyFormatter = new Intl.NumberFormat('zh-CN', {
     style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2,
   });
@@ -106,6 +106,7 @@
     if (flowBody) flowBody.innerHTML = '<div class="live-empty">正在读取最近的转账记录…</div>';
     const queueList = document.querySelector('.queue-list');
     if (queueList) queueList.innerHTML = '<div class="live-empty">正在检查待确认事项…</div>';
+    resetStaticMetrics('正在读取真实数据');
   }
 
   function renderEmpty(message) {
@@ -120,6 +121,71 @@
     document.querySelector('.sources .source-body').innerHTML = `<div class="live-empty">${escapeHtml(message)}</div>`;
     document.querySelector('.flow .flow-body').innerHTML = '<div class="live-empty">完成交易同步和转账匹配后，这里会显示真实资金路径。</div>';
     document.querySelector('.queue-list').innerHTML = '<div class="live-empty">当前没有可读取的审核队列。</div>';
+    resetStaticMetrics('尚无真实数据');
+    clearCharts();
+    renderLiveRoute();
+  }
+
+  function resetStaticMetrics(statusText) {
+    document.querySelector('.account-chip').innerHTML = '<i aria-hidden="true"></i>尚未连接账户';
+    const score = document.querySelector('.health .score');
+    if (score) score.style.background = 'conic-gradient(var(--green) 0 0deg,#273041 0deg)';
+    const scoreValue = document.querySelector('.health .score b');
+    if (scoreValue) scoreValue.textContent = '—';
+    const scoreLabel = document.querySelector('.health .score small');
+    if (scoreLabel) scoreLabel.textContent = '成本覆盖';
+    const scoreText = document.querySelector('.health .score-text');
+    if (scoreText) scoreText.innerHTML = `<b>${escapeHtml(statusText)}</b><span>同步后才会计算账本健康度</span>`;
+    document.querySelectorAll('.health-list b').forEach((node) => { node.textContent = '—'; });
+    const reviewButton = document.querySelector('.review-btn');
+    if (reviewButton) {
+      reviewButton.textContent = '暂无待审核事项';
+      reviewButton.dataset.toast = '同步真实流水后才会生成审核事项';
+    }
+    const badge = document.querySelector('.nav-badge');
+    if (badge) {
+      badge.textContent = '0';
+      badge.setAttribute('aria-label', '0 笔待审核');
+    }
+    const riskNumber = document.querySelector('.risk-number');
+    if (riskNumber) riskNumber.textContent = '—';
+    const riskCopy = document.querySelector('.risk p');
+    if (riskCopy) riskCopy.textContent = '同步衍生品账户后计算';
+    const riskBar = document.querySelector('.risk-bar');
+    if (riskBar) riskBar.setAttribute('aria-label', '保证金使用率暂无数据');
+    const riskBarValue = document.querySelector('.risk-bar span');
+    if (riskBarValue) riskBarValue.style.width = '0%';
+    const riskNote = document.querySelector('.risk-note');
+    if (riskNote) riskNote.textContent = 'NET EXPOSURE · —';
+    document.querySelectorAll('.performance-foot b').forEach((node) => {
+      node.textContent = '—';
+      node.className = '';
+    });
+    const flowStatus = document.querySelector('.flow .status');
+    if (flowStatus) {
+      flowStatus.textContent = '尚无数据';
+      flowStatus.className = 'status';
+    }
+    const queueStatus = document.querySelector('.queue .status');
+    if (queueStatus) {
+      queueStatus.textContent = '0 项';
+      queueStatus.className = 'status';
+    }
+    window.dashboardPeriods = Object.fromEntries(['1D', '30D', 'ALL'].map((key) => [key, {
+      net: '—', delta: '—', caption: '等待真实账本数据', pnl: '—', pct: '—',
+    }]));
+  }
+
+  function clearCharts() {
+    document.querySelectorAll('.spark, .performance-chart svg').forEach((svg) => {
+      svg.querySelectorAll('path.area, path.line').forEach((path) => path.setAttribute('d', ''));
+      const circle = svg.querySelector('circle');
+      if (circle) circle.setAttribute('r', '0');
+      svg.setAttribute('aria-label', '暂无真实净值历史');
+    });
+    document.querySelectorAll('.performance-chart text').forEach((label, index) => {
+      label.textContent = index === 0 ? '等待首次快照' : '';
+    });
   }
 
   function configurePeriods(summary) {
@@ -319,12 +385,23 @@
     const performance = pathForHistory(history, 690, 160);
     const apply = (selector, data) => {
       const svg = document.querySelector(selector);
-      if (!svg || !data) return;
+      if (!svg) return;
+      if (!data) {
+        svg.querySelectorAll('path.area, path.line').forEach((path) => path.setAttribute('d', ''));
+        const emptyCircle = svg.querySelector('circle');
+        if (emptyCircle) emptyCircle.setAttribute('r', '0');
+        svg.setAttribute('aria-label', '暂无真实净值历史');
+        return;
+      }
       svg.querySelector('path.line')?.setAttribute('d', data.line);
       svg.querySelector('path.area')?.setAttribute('d', data.area);
       const circle = svg.querySelector('circle');
       const last = data.line.match(/([\d.]+) ([\d.]+)$/);
-      if (circle && last) { circle.setAttribute('cx', last[1]); circle.setAttribute('cy', last[2]); }
+      if (circle && last) {
+        circle.setAttribute('cx', last[1]);
+        circle.setAttribute('cy', last[2]);
+        circle.setAttribute('r', '4');
+      }
       svg.setAttribute('aria-label', `真实净值曲线，共 ${data.rows.length} 个快照`);
     };
     apply('.spark', spark);
@@ -367,11 +444,49 @@
     }).join('');
   }
 
+  function renderRouteEmpty(route) {
+    const routeView = document.getElementById('routeView');
+    if (!routeView || route === 'dashboard' || route === 'settings') return;
+    const labels = {
+      portfolio: ['资产组合', '创建 Portfolio 并同步账户后，这里会显示真实净值与构成。'],
+      assets: ['资产', '同步完成并重算成本后，这里会显示真实持仓。'],
+      accounts: ['账户', '连接只读账户后，这里会显示同步状态与账户权益。'],
+      transfers: ['转账审核', '同步真实充值、提现和链上流水后，这里会生成匹配候选。'],
+      transactions: ['交易流水', '账户同步完成后，这里会显示标准化账本事件。'],
+      ledger: ['成本账本', '先同步真实交易，再执行成本重算。'],
+      pnl: ['盈亏分析', '至少需要真实成本结果和 Portfolio Snapshot 才能计算期间盈亏。'],
+      exposure: ['净敞口', '同步现货与衍生品账户后，这里会显示真实敞口。'],
+      analytics: ['分析', '保存真实净值快照后，这里会生成分析视图。'],
+    };
+    const [title, copy] = labels[route] || ['等待真实数据', '完成账户连接和同步后再展示数据。'];
+    const action = ['accounts', 'portfolio', 'assets'].includes(route)
+      ? '<div class="route-actions"><a class="action primary" href="/connections.html">连接只读账户</a></div>'
+      : '';
+    routeView.innerHTML = `<div class="route-header"><div><h1>${escapeHtml(title)}</h1><p>${escapeHtml(copy)}</p></div>${action}</div><div class="view-grid"><article class="view-panel span-12"><div class="live-empty">当前没有真实数据。所有数值会在账户同步完成后出现。</div></article></div>`;
+  }
+
+  function renderTransferRoute(summary) {
+    const routeView = document.getElementById('routeView');
+    const groups = state.groups;
+    const candidates = state.candidates;
+    const rows = candidates.map((candidate) => `<tr><td>${escapeHtml(accountLabel(summary, candidate.source_account_id))}</td><td>${escapeHtml(accountLabel(summary, candidate.destination_account_id))}</td><td class="n">${quantity(candidate.source_amount)} ${escapeHtml(assetSymbol(summary, candidate.source_asset_id))}</td><td class="n">${candidate.score} / 100</td><td class="n">${escapeHtml(candidate.status)}</td></tr>`).join('');
+    routeView.innerHTML = `<div class="route-header"><div><h1>转账审核</h1><p>只展示由真实账本流水产生的匹配结果。</p></div></div><div class="metric-grid">${metric('待审核', String(candidates.length), '真实匹配候选')}${metric('已匹配', String(groups.length), '真实 Transfer Groups')}</div><div class="view-grid"><article class="view-panel span-12"><header><div><h2>待审核队列</h2><p>确认后才会携带成本，不产生已实现盈亏。</p></div></header>${rows ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>来源</th><th>去向</th><th class="n">数量</th><th class="n">置信度</th><th class="n">状态</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="live-empty">当前没有真实转账匹配候选。</div>'}</article></div>`;
+  }
+
+  function renderTransactionRoute() {
+    const routeView = document.getElementById('routeView');
+    const rows = state.events.map((event) => `<tr><td>${escapeHtml(formatDate(event.occurred_at))}</td><td>${escapeHtml(event.source)}</td><td>${escapeHtml(event.event_type)}</td><td class="n">${event.entries.length}</td><td class="n">${escapeHtml(event.status)}</td></tr>`).join('');
+    routeView.innerHTML = `<div class="route-header"><div><h1>交易流水</h1><p>只展示同步后写入标准化账本的真实事件。</p></div></div><div class="view-grid"><article class="view-panel span-12"><header><div><h2>标准化事件</h2><p>Raw Event 与 Ledger Event 分层保留。</p></div></header>${rows ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>时间</th><th>来源</th><th>事件</th><th class="n">分录数</th><th class="n">状态</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="live-empty">当前没有真实账本事件。请先连接账户并同步。</div>'}</article></div>`;
+  }
+
   function renderLiveRoute() {
     const summary = state.summary;
-    if (!summary) return;
     const route = location.hash.replace('#', '') || 'dashboard';
-    if (route === 'dashboard') return;
+    if (route === 'dashboard' || route === 'settings') return;
+    if (!summary) {
+      renderRouteEmpty(route);
+      return;
+    }
     const routeView = document.getElementById('routeView');
     const calculated = summary.assets.reduce((sum, asset) => sum + (decimal(asset.calculated_cost_usd) || 0), 0);
     const effective = summary.assets.reduce((sum, asset) => sum + (decimal(asset.effective_cost_usd) || 0), 0);
@@ -384,6 +499,10 @@
     } else if (route === 'accounts') {
       const complete = summary.accounts.filter((account) => account.valuation_complete).length;
       routeView.innerHTML = `<div class="route-header"><div><h1>账户</h1><p>账户权益、同步时间与估值完整性来自真实同步记录。</p></div><div class="route-actions"><a class="action primary" href="/connections.html">添加账户</a></div></div><div class="metric-grid">${metric('Connected', String(summary.accounts.length), '只读账户')}${metric('Valued', String(complete), '已完成美元估值')}${metric('Needs attention', String(summary.accounts.length - complete), '数据或价格待补')}${metric('Total equity', currency(summary.total_net_worth_usd), 'Portfolio NAV')}</div><div class="view-grid"><article class="view-panel span-12"><header><div><h2>账户清单</h2><p>Spot、Cash 与 Perp Equity 已分层聚合。</p></div></header>${accountList(summary.accounts)}</article></div>`;
+    } else if (route === 'transfers') {
+      renderTransferRoute(summary);
+    } else if (route === 'transactions') {
+      renderTransactionRoute();
     } else if (route === 'ledger') {
       routeView.innerHTML = `<div class="route-header"><div><h1>成本账本</h1><p>Calculated Cost、Manual Override 与原始数据三层保留。</p></div></div><div class="metric-grid">${metric('Effective cost', currency(effective), '当前盈亏口径')}${metric('Calculated cost', currency(calculated), '由交易流水重建')}${metric('Manual delta', currency(effective - calculated, true), '人工覆盖影响', classFor(effective - calculated))}${metric('Open cost lots', String(lots), escapeHtml(summary.cost_method))}</div><div class="view-grid"><article class="view-panel span-12"><header><div><h2>有效成本</h2><p>不修改任何 Raw Event。</p></div></header><div class="table-wrap"><table class="data-table"><thead><tr><th>资产</th><th class="n">持有</th><th class="n">有效成本</th><th class="n">市值</th><th class="n">未实现 PnL</th><th class="n">模式</th></tr></thead><tbody>${assetRows(summary.assets)}</tbody></table></div></article></div>`;
     } else if (route === 'pnl') {
@@ -408,13 +527,15 @@
       state.portfolioId = portfolio.id;
       localStorage.setItem('bags_portfolio_id', portfolio.id);
       const summary = await window.BagsAuth.api(`/dashboard/portfolios/${portfolio.id}/summary`);
-      const [groups, candidates] = await Promise.all([
-        window.BagsAuth.api(`/transfers/portfolios/${portfolio.id}/groups?limit=1`).catch(() => []),
-        window.BagsAuth.api(`/transfers/portfolios/${portfolio.id}/candidates?status=needs_review&limit=4`).catch(() => []),
+      const [groups, candidates, events] = await Promise.all([
+        window.BagsAuth.api(`/transfers/portfolios/${portfolio.id}/groups?limit=20`).catch(() => []),
+        window.BagsAuth.api(`/transfers/portfolios/${portfolio.id}/candidates?status=needs_review&limit=100`).catch(() => []),
+        window.BagsAuth.api(`/ledger/events?portfolio_id=${portfolio.id}&limit=100`).catch(() => []),
       ]);
       state.summary = summary;
       state.groups = groups;
       state.candidates = candidates;
+      state.events = events;
       renderHome(summary, groups, candidates);
       renderLiveRoute();
     } catch (error) {
@@ -424,6 +545,9 @@
     }
   }
 
+  window.BagsRenderDashboardRoute = renderLiveRoute;
+  primeLoadingState();
+  renderLiveRoute();
   document.addEventListener('DOMContentLoaded', loadDashboard);
   addEventListener('hashchange', () => setTimeout(renderLiveRoute, 0));
 })();
