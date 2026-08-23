@@ -21,6 +21,17 @@ def create_evm_account(client):
 def test_phase1_registers_disabled_zerion_source_without_external_configuration(client):
     account = create_evm_account(client)
 
+    status = client.get("/api/v1/zerion/status")
+    assert status.status_code == 200, status.text
+    assert status.json() == {
+        "configured": False,
+        "requests_per_second_limit": 1,
+        "daily_request_limit": 300,
+        "daily_request_budget": 270,
+        "max_requests_per_run": 3,
+        "min_sync_interval_seconds": 900,
+    }
+
     configured = client.put(
         f"/api/v1/zerion/accounts/{account['id']}/source",
         json={"is_enabled": False, "mode": "disabled"},
@@ -85,5 +96,9 @@ def test_phase1_accepts_only_shadow_and_preserves_free_plan_caps(client, monkeyp
         assert body["max_requests_per_run"] == 3
         assert body["min_sync_interval_seconds"] == 900
         assert body["daily_request_budget"] == 270
+
+        status_response = client.get("/api/v1/zerion/status")
+        assert status_response.status_code == 200
+        assert status_response.json()["configured"] is True
     finally:
         get_settings.cache_clear()

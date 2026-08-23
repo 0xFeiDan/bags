@@ -132,6 +132,15 @@ class ZerionDataSourceRead(Schema):
     updated_at: datetime
 
 
+class ZerionStatusRead(BaseModel):
+    configured: bool
+    requests_per_second_limit: int
+    daily_request_limit: int
+    daily_request_budget: int
+    max_requests_per_run: int
+    min_sync_interval_seconds: int
+
+
 class ProviderSyncRunRead(Schema):
     id: UUID
     data_source_id: UUID
