@@ -5,6 +5,8 @@ canonical asset identity, account/connection registry, balance snapshots, and a
 Docker runtime. Phase 2 adds a GET-only Binance connector for Spot, USD-M and COIN-M.
 Phase 3 adds Hyperliquid through its public, read-only information API.
 Security V1 adds a single-administrator login boundary for the shared personal ledger.
+Phase 8 adds Bybit V5 and Bitget V2 read-only synchronization plus the browser-based
+account connection and credential-rotation workbench at `/connections.html`.
 
 ## Run locally
 
@@ -323,6 +325,39 @@ POST /api/v1/dashboard/portfolios/{portfolio_id}/snapshots/backfill
 现有首页以及资产、账户、账本、盈亏、风险敞口和分析页已接入这些接口；加载、
 空数据、部分估值和请求失败都有独立状态。静态演示数据不再作为 Dashboard
 财务数字显示。
+
+## Bybit / Bitget Phase 8
+
+Open `/connections.html` after signing in to create a Portfolio, add an encrypted
+read-only connection, verify the administrator password/TOTP, and immediately run
+the first synchronization. The page supports Binance, Bybit, Bitget, Hyperliquid,
+and configured EVM wallets; it never reads a stored secret back into the browser.
+
+Bybit uses the V5 Unified API:
+
+- `POST /api/v1/exchanges/bybit/connections/{connection_id}/sync`
+- `GET /api/v1/exchanges/bybit/connections/{connection_id}/sync-runs`
+
+It verifies `/v5/user/query-api` reports `readOnly=1`, then reads Unified balances,
+Linear/Inverse positions, Spot executions, transaction logs, deposits, and
+withdrawals. V5 history is bounded to two years and the result reports scope limits.
+
+Bitget uses the V2 Classic API so ordinary Spot and Futures accounts remain
+supported:
+
+- `POST /api/v1/exchanges/bitget/connections/{connection_id}/sync`
+- `GET /api/v1/exchanges/bitget/connections/{connection_id}/sync-runs`
+
+It requires API key, secret, and passphrase, reads the account `authorities`, and
+fails closed when the permission list is missing or contains any write, transfer,
+withdrawal, or unknown authority. Spot and each Futures product are stored in
+separate accounts so same-asset balances cannot overwrite each other. Bitget fills
+and account bills normally cover the latest 90 days; older records require a later
+import workflow.
+
+Both clients expose HTTP GET only. Every response used by the normalizer is first
+stored as a raw event; credentials are AES-256-GCM encrypted and never logged or
+returned by the API.
 
 ## Safety invariants already enforced
 

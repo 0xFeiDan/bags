@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     binance_coinm_base_url: str = "https://dapi.binance.com"
     binance_request_timeout_seconds: float = 15.0
     binance_max_retries: int = 3
+    bybit_base_url: str = "https://api.bybit.com"
+    bybit_request_timeout_seconds: float = 15.0
+    bybit_max_retries: int = 3
+    bitget_base_url: str = "https://api.bitget.com"
+    bitget_request_timeout_seconds: float = 15.0
+    bitget_max_retries: int = 3
     hyperliquid_base_url: str = "https://api.hyperliquid.xyz"
     hyperliquid_request_timeout_seconds: float = 15.0
     hyperliquid_max_retries: int = 3

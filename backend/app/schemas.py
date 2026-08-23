@@ -125,6 +125,25 @@ class ConnectionRead(Schema):
     created_at: datetime
 
 
+class ConnectionUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    api_key: str | None = Field(default=None, min_length=1, max_length=2048)
+    api_secret: str | None = Field(default=None, min_length=1, max_length=4096)
+    passphrase: str | None = Field(default=None, min_length=1, max_length=4096)
+    is_enabled: bool | None = None
+
+    @model_validator(mode="after")
+    def has_update(self):
+        if all(
+            value is None
+            for value in (self.name, self.api_key, self.api_secret, self.passphrase, self.is_enabled)
+        ):
+            raise ValueError("at least one connection field must be updated")
+        return self
+
+
 class RawEventCreate(BaseModel):
     account_id: UUID | None = None
     connection_id: UUID | None = None
@@ -283,6 +302,46 @@ class BinanceSyncRead(Schema):
     finished_at: datetime | None
 
 
+class BybitSyncRequest(BaseModel):
+    products: list[Literal["spot", "linear", "inverse"]] = Field(
+        default_factory=lambda: ["spot", "linear", "inverse"], min_length=1
+    )
+    spot_symbols: list[str] = Field(default_factory=list, max_length=200)
+    linear_settle_coins: list[str] = Field(default_factory=lambda: ["USDT", "USDC"], max_length=20)
+    inverse_settle_coins: list[str] = Field(default_factory=lambda: ["BTC", "ETH"], max_length=20)
+    history_start: datetime | None = None
+    history_end: datetime | None = None
+
+    @field_validator("products")
+    @classmethod
+    def unique_bybit_products(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(values))
+
+    @field_validator("spot_symbols", "linear_settle_coins", "inverse_settle_coins")
+    @classmethod
+    def normalize_bybit_symbols(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(value.strip().upper() for value in values if value.strip()))
+
+
+class BitgetSyncRequest(BaseModel):
+    products: list[Literal["spot", "usdt-futures", "usdc-futures", "coin-futures"]] = Field(
+        default_factory=lambda: ["spot", "usdt-futures", "usdc-futures", "coin-futures"], min_length=1
+    )
+    spot_symbols: list[str] = Field(default_factory=list, max_length=200)
+    history_start: datetime | None = None
+    history_end: datetime | None = None
+
+    @field_validator("products")
+    @classmethod
+    def unique_bitget_products(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(values))
+
+    @field_validator("spot_symbols")
+    @classmethod
+    def normalize_bitget_symbols(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(value.strip().upper() for value in values if value.strip()))
+
+
 class HyperliquidSyncRequest(BaseModel):
     history_start: datetime | None = None
     history_end: datetime | None = None
@@ -387,6 +446,14 @@ class WalletSyncRunRead(Schema):
     error_message: str | None
     started_at: datetime
     finished_at: datetime | None
+
+
+class EvmChainRead(BaseModel):
+    key: str
+    chain_id: str
+    name: str
+    native_symbol: str
+    configured: bool
 
 
 class TransferMatchRequest(BaseModel):

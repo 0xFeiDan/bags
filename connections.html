@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Bags 只读账户连接与同步工作台" />
+  <meta name="theme-color" content="#07090f" />
+  <title>Bags · 连接账户</title>
+  <link rel="stylesheet" href="/connections.css" />
+  <script defer src="/auth.js"></script>
+  <script defer src="/connections.js"></script>
+</head>
+<body class="auth-pending" data-auth="required">
+  <a class="skip-link" href="#connectionWizard">跳到连接向导</a>
+  <header class="workspace-top">
+    <a class="brand" href="/" aria-label="返回 Bags 仪表盘">
+      <span class="brand-mark">B</span>
+      <span><strong>Bags</strong><small>ASSET LEDGER</small></span>
+    </a>
+    <div class="top-actions">
+      <span class="secure-indicator"><i aria-hidden="true"></i>只读连接</span>
+      <a class="back-link" href="/#accounts">返回仪表盘</a>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <section class="page-head" aria-labelledby="pageTitle">
+      <div>
+        <h1 id="pageTitle">连接真实账户</h1>
+        <p>选择数据源、确认读取范围并完成一次真实同步。密钥只会加密写入服务端，不会再次返回浏览器。</p>
+      </div>
+      <div class="system-state" id="systemState" role="status">
+        <span class="state-dot" aria-hidden="true"></span>
+        <span>正在检查连接能力…</span>
+      </div>
+    </section>
+
+    <section class="wizard-shell" id="connectionWizard" aria-labelledby="wizardTitle">
+      <aside class="step-rail" aria-label="连接步骤">
+        <div class="rail-copy">
+          <h2 id="wizardTitle">账户接入</h2>
+          <p>约 2–5 分钟。同步只读取数据，不会交易或提现。</p>
+        </div>
+        <ol>
+          <li class="active" data-step-indicator="1" aria-current="step"><b>1</b><span>选择来源<small>Portfolio 与平台</small></span></li>
+          <li data-step-indicator="2"><b>2</b><span>读取范围<small>账户与历史数据</small></span></li>
+          <li data-step-indicator="3"><b>3</b><span>安全确认<small>密码与 TOTP</small></span></li>
+          <li data-step-indicator="4"><b>4</b><span>同步结果<small>覆盖与警告</small></span></li>
+        </ol>
+        <div class="safety-note">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 4.5 6v5.4c0 4.7 3 8 7.5 9.6 4.5-1.6 7.5-4.9 7.5-9.6V6L12 3Z" stroke="currentColor"/><path d="m9 12 2 2 4-5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span><b>安全边界</b>中心化交易所密钥包含写入、交易或提现权限时，Bags 会拒绝同步。</span>
+        </div>
+      </aside>
+
+      <div class="step-content">
+        <section class="wizard-step active" data-step="1" aria-labelledby="step1Title">
+          <div class="step-head"><span>第一步</span><h2 id="step1Title">这次要连接什么？</h2><p>先选数据来源，再决定归属到哪个 Portfolio。</p></div>
+          <fieldset class="source-grid">
+            <legend class="sr-only">选择数据来源</legend>
+            <label class="source-option selected">
+              <input type="radio" name="source" value="binance" checked />
+              <span class="source-mark binance">BN</span>
+              <span><b>Binance</b><small>Spot · USD-M · COIN-M</small></span>
+              <em>API 只读</em>
+            </label>
+            <label class="source-option">
+              <input type="radio" name="source" value="bybit" />
+              <span class="source-mark bybit">BY</span>
+              <span><b>Bybit</b><small>Unified · Linear · Inverse</small></span>
+              <em>V5 只读</em>
+            </label>
+            <label class="source-option">
+              <input type="radio" name="source" value="bitget" />
+              <span class="source-mark bitget">BG</span>
+              <span><b>Bitget</b><small>Spot · USDT/USDC/COIN Futures</small></span>
+              <em>V2 只读</em>
+            </label>
+            <label class="source-option">
+              <input type="radio" name="source" value="hyperliquid" />
+              <span class="source-mark hyperliquid">HL</span>
+              <span><b>Hyperliquid</b><small>Perp · Spot · Funding</small></span>
+              <em>公开地址</em>
+            </label>
+            <label class="source-option" id="evmSourceOption">
+              <input type="radio" name="source" value="evm" />
+              <span class="source-mark evm">0x</span>
+              <span><b>EVM Wallet</b><small>六条 EVM 网络</small></span>
+              <em id="evmSourceStatus">检查 RPC</em>
+            </label>
+          </fieldset>
+
+          <div class="form-section portfolio-section">
+            <div><h3>归属 Portfolio</h3><p>同一 Portfolio 内的交易所和钱包可以匹配内部转账并继承成本。</p></div>
+            <div class="field-stack">
+              <label class="field"><span>Portfolio</span><select id="portfolioSelect"><option value="__new__">创建新的 Portfolio</option></select></label>
+              <label class="field" id="newPortfolioField"><span>名称</span><input id="portfolioName" maxlength="120" value="Personal" autocomplete="off" /></label>
+            </div>
+          </div>
+          <div class="step-actions"><a class="text-action" href="/">暂时返回仪表盘</a><button class="primary-action" id="toDetails" type="button">继续配置读取范围</button></div>
+        </section>
+
+        <section class="wizard-step" data-step="2" aria-labelledby="step2Title" hidden>
+          <div class="step-head"><span>第二步</span><h2 id="step2Title">配置读取范围</h2><p id="detailsLead">仅填写完成同步所需的信息。</p></div>
+
+          <form id="detailsForm" novalidate>
+            <div class="source-form" data-source-form="binance">
+              <div class="form-grid two">
+                <label class="field"><span>账户名称</span><input id="binanceLabel" value="Binance Main" maxlength="120" required autocomplete="off" /></label>
+                <label class="field"><span>连接名称</span><input id="binanceConnectionName" value="Binance Read-only" maxlength="80" required autocomplete="off" /></label>
+                <label class="field"><span>API Key</span><input id="binanceApiKey" type="password" maxlength="2048" placeholder=" " required autocomplete="new-password" spellcheck="false" /></label>
+                <label class="field"><span>Secret Key</span><input id="binanceApiSecret" type="password" maxlength="4096" placeholder=" " required autocomplete="new-password" spellcheck="false" /></label>
+              </div>
+              <div class="permission-callout"><b>创建密钥时只勾选读取权限</b><span>不得开启现货交易、合约交易或提现。Bags 会在首次同步时再次检查。</span></div>
+              <fieldset class="check-group"><legend>同步产品</legend><label><input type="checkbox" name="binanceProduct" value="spot" checked />Spot</label><label><input type="checkbox" name="binanceProduct" value="usdm" checked />USD-M</label><label><input type="checkbox" name="binanceProduct" value="coinm" checked />COIN-M</label></fieldset>
+              <details class="advanced"><summary>历史市场范围（可选）</summary><div class="form-grid two"><label class="field"><span>Spot 交易对</span><textarea id="spotSymbols" rows="3" placeholder="BTCUSDT, ETHUSDT"></textarea></label><label class="field"><span>USD-M 交易对</span><textarea id="usdmSymbols" rows="3" placeholder="BTCUSDT, ETHUSDT"></textarea></label><label class="field"><span>COIN-M 标的</span><textarea id="coinmPairs" rows="3" placeholder="BTCUSD, ETHUSD"></textarea></label><label class="field"><span>历史开始时间</span><input id="binanceHistoryStart" type="datetime-local" /></label></div><p>不填写市场时，Bags 会读取当前余额和持仓；交易历史覆盖范围会在结果中明确提示。</p></details>
+            </div>
+
+            <div class="source-form" data-source-form="bybit" hidden>
+              <div class="form-grid two">
+                <label class="field"><span>账户名称</span><input id="bybitLabel" value="Bybit Main" maxlength="120" required autocomplete="off" /></label>
+                <label class="field"><span>连接名称</span><input id="bybitConnectionName" value="Bybit Read-only" maxlength="80" required autocomplete="off" /></label>
+                <label class="field"><span>API Key</span><input id="bybitApiKey" type="password" maxlength="2048" placeholder=" " required autocomplete="new-password" spellcheck="false" /></label>
+                <label class="field"><span>Secret Key</span><input id="bybitApiSecret" type="password" maxlength="4096" placeholder=" " required autocomplete="new-password" spellcheck="false" /></label>
+              </div>
+              <div class="permission-callout"><b>Bybit API Key 必须设为 Read-Only</b><span>Bags 会调用 V5 权限接口复核；不是只读密钥时同步会直接终止。</span></div>
+              <fieldset class="check-group"><legend>同步产品</legend><label><input type="checkbox" name="bybitProduct" value="spot" checked />Spot</label><label><input type="checkbox" name="bybitProduct" value="linear" checked />Linear</label><label><input type="checkbox" name="bybitProduct" value="inverse" checked />Inverse</label></fieldset>
+              <details class="advanced"><summary>历史与结算币范围（可选）</summary><div class="form-grid two"><label class="field"><span>Spot 交易对筛选</span><textarea id="bybitSpotSymbols" rows="3" placeholder="BTCUSDT, ETHUSDT"></textarea></label><label class="field"><span>Linear 结算币</span><input id="bybitLinearCoins" value="USDT, USDC" autocomplete="off" /></label><label class="field"><span>Inverse 结算币</span><input id="bybitInverseCoins" value="BTC, ETH" autocomplete="off" /></label><label class="field"><span>历史开始时间</span><input id="bybitHistoryStart" type="datetime-local" /></label></div><p>Bybit V5 交易流水最多回查两年；超出范围时结果会标明覆盖缺口。</p></details>
+            </div>
+
+            <div class="source-form" data-source-form="bitget" hidden>
+              <div class="form-grid two">
+                <label class="field"><span>账户名称</span><input id="bitgetLabel" value="Bitget Main" maxlength="120" required autocomplete="off" /></label>
+                <label class="field"><span>连接名称</span><input id="bitgetConnectionName" value="Bitget Read-only" maxlength="80" required autocomplete="off" /></label>
+                <label class="field"><span>API Key</span><input id="bitgetApiKey" type="password" maxlength="2048" placeholder=" " required autocomplete="new-password" spellcheck="false" /></label>
+                <label class="field"><span>Secret Key</span><input id="bitgetApiSecret" type="password" maxlength="4096" placeholder=" " required autocomplete="new-password" spellcheck="false" /></label>
+                <label class="field span-two"><span>Passphrase</span><input id="bitgetPassphrase" type="password" maxlength="4096" placeholder=" " required autocomplete="new-password" spellcheck="false" /></label>
+              </div>
+              <div class="permission-callout"><b>只允许 Read-Only 权限</b><span>不要开启 Trade、Transfer 或 Withdraw；Bags 会读取 authorities 并拒绝任何写权限。</span></div>
+              <fieldset class="check-group"><legend>同步产品</legend><label><input type="checkbox" name="bitgetProduct" value="spot" checked />Spot</label><label><input type="checkbox" name="bitgetProduct" value="usdt-futures" checked />USDT Futures</label><label><input type="checkbox" name="bitgetProduct" value="usdc-futures" checked />USDC Futures</label><label><input type="checkbox" name="bitgetProduct" value="coin-futures" checked />COIN Futures</label></fieldset>
+              <details class="advanced"><summary>历史范围（可选）</summary><div class="form-grid two"><label class="field"><span>Spot 交易对筛选</span><textarea id="bitgetSpotSymbols" rows="3" placeholder="BTCUSDT, ETHUSDT"></textarea></label><label class="field"><span>历史开始时间</span><input id="bitgetHistoryStart" type="datetime-local" /></label></div><p>Bitget 成交和合约账单 API 通常只保留最近 90 天；更早记录需要后续导入。</p></details>
+            </div>
+
+            <div class="source-form" data-source-form="hyperliquid" hidden>
+              <div class="form-grid two">
+                <label class="field"><span>账户名称</span><input id="hyperliquidLabel" value="Hyperliquid" maxlength="120" required autocomplete="off" /></label>
+                <label class="field"><span>公开钱包地址</span><input id="hyperliquidAddress" pattern="^0x[a-fA-F0-9]{40}$" placeholder="0x…" required autocomplete="off" spellcheck="false" /></label>
+                <label class="field"><span>历史开始时间（可选）</span><input id="hyperliquidHistoryStart" type="datetime-local" /></label>
+                <label class="check-field"><input id="hyperliquidSpot" type="checkbox" checked /><span><b>同时读取 Spot</b><small>包括现货余额和成交</small></span></label>
+              </div>
+              <div class="permission-callout good"><b>只需要公开地址</b><span>不要输入私钥、助记词或 Hyperliquid API Wallet 私钥。</span></div>
+            </div>
+
+            <div class="source-form" data-source-form="evm" hidden>
+              <div class="form-grid two">
+                <label class="field"><span>钱包名称</span><input id="evmLabel" value="Main Wallet" maxlength="120" required autocomplete="off" /></label>
+                <label class="field"><span>网络</span><select id="evmChain" required></select><small id="evmChainHelp">仅显示服务器已经配置 RPC 的网络。</small></label>
+                <label class="field span-two"><span>公开钱包地址</span><input id="evmAddress" pattern="^0x[a-fA-F0-9]{40}$" placeholder="0x…" required autocomplete="off" spellcheck="false" /></label>
+              </div>
+              <div class="permission-callout good"><b>仅查询公开链上数据</b><span>Bags 不接受私钥或助记词，也没有签名和发送交易的能力。</span></div>
+              <details class="advanced"><summary>边界回填（可选）</summary><div class="form-grid two"><label class="field"><span>起始区块</span><input id="evmFromBlock" type="number" min="0" inputmode="numeric" /></label><label class="field"><span>结束区块</span><input id="evmToBlock" type="number" min="0" inputmode="numeric" /></label><label class="field"><span>代币合约</span><textarea id="evmContracts" rows="3" placeholder="每行一个 0x 合约地址"></textarea></label><label class="field"><span>指定交易哈希</span><textarea id="evmTransactions" rows="3" placeholder="每行一个 0x 交易哈希"></textarea></label></div><p>首次建议留空，使用服务器的安全默认回看范围；大范围历史请分批回填。</p></details>
+            </div>
+          </form>
+          <div class="form-message" id="detailsMessage" role="alert"></div>
+          <div class="step-actions"><button class="secondary-action" data-back="1" type="button">返回选择来源</button><button class="primary-action" id="toVerify" type="button">检查并继续</button></div>
+        </section>
+
+        <section class="wizard-step" data-step="3" aria-labelledby="step3Title" hidden>
+          <div class="step-head"><span>第三步</span><h2 id="step3Title">确认敏感操作</h2><p>添加或更新凭据前，需要重新验证当前管理员身份。</p></div>
+          <div class="review-strip" id="connectionReview"></div>
+          <div class="verify-panel">
+            <label class="field"><span>当前登录密码</span><input id="verifyPassword" type="password" required autocomplete="current-password" /></label>
+            <label class="field" id="verifyTotpField" hidden><span>六位 TOTP 验证码</span><input id="verifyTotp" inputmode="numeric" pattern="^\d{6}$" maxlength="6" autocomplete="one-time-code" /></label>
+          </div>
+          <div class="form-message" id="verifyMessage" role="alert"></div>
+          <div class="step-actions"><button class="secondary-action" data-back="2" type="button">返回修改</button><button class="primary-action" id="connectNow" type="button">验证并开始同步</button></div>
+        </section>
+
+        <section class="wizard-step" data-step="4" aria-labelledby="step4Title" hidden>
+          <div class="step-head"><span>第四步</span><h2 id="step4Title">同步结果</h2><p>连接已写入只读账本，下面展示本次真实执行结果。</p></div>
+          <div class="result-panel" id="syncResult" role="status"></div>
+          <div class="step-actions"><button class="secondary-action" id="connectAnother" type="button">继续连接账户</button><a class="primary-action link-action" href="/#accounts">查看账户</a></div>
+        </section>
+      </div>
+    </section>
+
+    <section class="connections-section" aria-labelledby="connectionsTitle">
+      <div class="section-head"><div><h2 id="connectionsTitle">连接与同步状态</h2><p>这里显示真实账户、最近一次同步和可恢复操作。</p></div><button class="secondary-action compact" id="refreshConnections" type="button">刷新状态</button></div>
+      <div class="connections-list" id="connectionsList"><div class="loading-row">正在读取账户…</div></div>
+    </section>
+  </main>
+</body>
+</html>

@@ -4,13 +4,29 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.connectors.evm.chains import CHAINS
 from app.connectors.evm.sync import EvmWalletSyncService
 from app.core.config import get_settings
 from app.db import get_session
 from app.models import WalletSyncRun
-from app.schemas import EvmSyncRequest, WalletSyncRunRead
+from app.schemas import EvmChainRead, EvmSyncRequest, WalletSyncRunRead
 
 router = APIRouter()
+
+
+@router.get("/chains", response_model=list[EvmChainRead])
+def list_chains() -> list[EvmChainRead]:
+    settings = get_settings()
+    return [
+        EvmChainRead(
+            key=chain.key,
+            chain_id=chain.chain_id,
+            name=chain.name,
+            native_symbol=chain.native_symbol,
+            configured=bool(getattr(settings, chain.rpc_setting, None)),
+        )
+        for chain in CHAINS.values()
+    ]
 
 
 @router.post("/accounts/{account_id}/sync", response_model=WalletSyncRunRead)

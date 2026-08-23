@@ -16,7 +16,7 @@ if settings.auth_allow_additional_registration:
 
 app = FastAPI(
     title="Bags API",
-    version="0.7.0",
+    version="0.8.0",
     openapi_url=None if settings.is_production else f"{settings.api_v1_prefix}/openapi.json",
     docs_url=None if settings.is_production else "/docs",
 )

@@ -108,7 +108,7 @@ class DashboardService:
         skip_cost_accounts = {
             account.id
             for account in accounts
-            if self._is_binance_derivative(account) and account.id in derivative_values
+            if self._uses_authoritative_equity(account) and account.id in derivative_values
         }
 
         warnings = list(run.warnings_json or [])
@@ -516,7 +516,7 @@ class DashboardService:
                     values[account.id] = equity.equity * multiplier
                     complete[account.id] = self._is_fresh(equity.as_of, as_of)
                 continue
-            if not self._is_binance_derivative(account):
+            if not self._uses_authoritative_equity(account):
                 continue
             balance_value, balance_complete = self._latest_balance_value(account.id, as_of)
             upnl_rows = by_account.get(account.id, [])
@@ -1160,9 +1160,17 @@ class DashboardService:
         return as_utc(as_of) - as_utc(observed_at) <= self._max_valuation_age
 
     @staticmethod
-    def _is_binance_derivative(account: Account) -> bool:
+    def _uses_authoritative_equity(account: Account) -> bool:
         identity = (account.external_account_id or "").lower()
-        return account.provider.lower() == "binance" and (identity.endswith(":usdm") or identity.endswith(":coinm"))
+        provider = account.provider.lower()
+        if provider == "binance":
+            return identity.endswith(":usdm") or identity.endswith(":coinm")
+        if provider == "bitget":
+            return any(identity.endswith(f":{product}") for product in ("usdt-futures", "usdc-futures", "coin-futures"))
+        # Bybit Unified equity already contains Spot and derivatives. Treat it
+        # as the authoritative NAV source so ledger cost positions are not
+        # counted a second time in the account total.
+        return provider == "bybit"
 
     @staticmethod
     def _position_side(row: PositionSnapshot) -> str:
