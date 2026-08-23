@@ -21,6 +21,26 @@ The static UI remains at `http://127.0.0.1:4173` when run with `node preview-ser
 The dashboard, login page, and security page use cookie authentication against
 `/api/v1`. API docs remain available in development at `http://127.0.0.1:8000/docs`.
 
+### Windows portable PostgreSQL
+
+This checkout can also use PostgreSQL 16.15 from the ignored `.runtime` folder
+without Docker or a Windows service. Because PostgreSQL's Windows utilities do
+not reliably handle the Chinese workspace path, the scripts create a temporary
+ASCII junction that still points to the same project-owned data directory.
+
+```powershell
+backend\scripts\start_local_postgres.ps1
+cd backend
+.\.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+The database listens only on `127.0.0.1:5432`; its generated SCRAM password and
+local `DATABASE_URL` stay in the ignored `.env`. Stop it cleanly with:
+
+```powershell
+backend\scripts\stop_local_postgres.ps1
+```
+
 ## Ubuntu one-shot startup
 
 On an Ubuntu host with Docker, Docker Compose v2, OpenSSL, and curl installed:
@@ -210,6 +230,40 @@ Useful endpoints:
 - `GET /api/v1/accounts/{account_id}/balance-snapshots`
 - `GET /api/v1/raw-events?account_id={account_id}`
 - `GET /api/v1/ledger/events`
+
+## Zerion Data Source Phase 1
+
+Phase 1 only registers an optional, read-only Zerion data source for an existing
+EVM wallet. It makes no external Zerion API request and cannot write Ledger,
+balances, or positions. This is intentional: a later shadow phase must compare
+Zerion evidence with the existing EVM collector before any financial cutover.
+
+Set `ZERION_ENABLED=true` and a server-only `ZERION_API_KEY` only when ready to
+configure a source. Defaults are deliberately conservative: no retry, at most
+three requests per run and one run per 15 minutes. A live demo-tier response on
+2026-08-23 reported 1 request/second and 300 requests/day, so Bags defaults to a
+270-request daily budget and reserves 30 requests for diagnostics. Provider
+response headers may tighten the active request interval and daily budget.
+
+- `PUT /api/v1/zerion/accounts/{account_id}/source`
+- `GET /api/v1/zerion/accounts/{account_id}/source`
+- `GET /api/v1/zerion/accounts/{account_id}/sync-runs`
+
+The only enabled mode in this release is `shadow`; `active` is rejected. The
+account remains provider `evm`; Zerion is a collector assignment, never the
+financial account identity.
+
+Phase 2 adds a manual shadow collector:
+
+- `POST /api/v1/zerion/accounts/{account_id}/shadow-sync` with `{}`
+
+Each run reserves quota in PostgreSQL before network I/O, spaces calls at no
+more than once per second by default, stops at the 270-request local daily
+budget, and does not retry HTTP 429. A run uses at most three requests in this
+order: the latest 100 transactions, the first 100 simple wallet positions, then
+one older transaction page. All resources are stored only as immutable Zerion
+RawEvents; the connector has no Ledger normalizer and cannot affect cost basis
+or NAV.
 
 ## Transfer Matching Phase 5
 

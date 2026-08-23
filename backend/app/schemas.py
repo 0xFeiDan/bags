@@ -11,6 +11,7 @@ from app.models import (
     AssetType,
     CostMethod,
     CostOverrideType,
+    DataSourceMode,
     EntryDirection,
     EventSource,
     EventStatus,
@@ -92,6 +93,65 @@ class AccountRead(Schema):
     address: str | None
     is_active: bool
     created_at: datetime
+
+
+class ZerionDataSourceUpsert(BaseModel):
+    """Phase 1 intentionally accepts shadow mode only; it cannot invoke Zerion."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    is_enabled: bool = False
+    mode: DataSourceMode = DataSourceMode.DISABLED
+
+    @model_validator(mode="after")
+    def only_allow_phase_one_modes(self):
+        if self.mode == DataSourceMode.ACTIVE:
+            raise ValueError("Zerion active mode is unavailable until shadow reconciliation passes")
+        if self.is_enabled and self.mode != DataSourceMode.SHADOW:
+            raise ValueError("an enabled Zerion source must use shadow mode")
+        return self
+
+
+class ZerionDataSourceRead(Schema):
+    id: UUID
+    account_id: UUID
+    provider: str
+    mode: DataSourceMode
+    is_enabled: bool
+    requests_per_second_limit: int
+    daily_request_limit: int
+    max_requests_per_run: int
+    min_sync_interval_seconds: int
+    daily_request_budget: int
+    remote_subscription_id: str | None
+    cursor_value: str | None
+    last_synced_at: datetime | None
+    next_sync_after: datetime | None
+    zerion_configured: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProviderSyncRunRead(Schema):
+    id: UUID
+    data_source_id: UUID
+    request_kind: str
+    status: SyncRunStatus
+    request_budget: int
+    request_count: int
+    stats_json: dict[str, Any]
+    warnings_json: list[Any]
+    rate_limit_json: dict[str, Any]
+    error_code: str | None
+    error_message: str | None
+    started_at: datetime
+    finished_at: datetime | None
+
+
+class ZerionShadowSyncRequest(BaseModel):
+    """Reserved request body for a manual, bounded shadow run."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class ConnectionCreate(BaseModel):
