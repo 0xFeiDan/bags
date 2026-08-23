@@ -51,6 +51,24 @@ def test_binance_credentials_can_be_rotated_without_being_returned(client, db_se
     assert cipher.decrypt(stored.encrypted_api_key) == "new-key"
     assert cipher.decrypt(stored.encrypted_api_secret) == "new-secret"
 
+    added = client.post(
+        f"/api/v1/binance/connections/{connection.json()['id']}/spot-symbols",
+        json={"symbols": ["btcusdt", "ETHUSDC", "BTCUSDT"]},
+    )
+    assert added.status_code == 201, added.text
+    assert [item["symbol"] for item in added.json()] == ["BTCUSDT", "ETHUSDC"]
+    assert all(item["discovery_source"] == "manual" for item in added.json())
+
+    disabled = client.patch(
+        f"/api/v1/binance/connections/{connection.json()['id']}/spot-symbols/{added.json()[0]['id']}",
+        json={"is_active": False},
+    )
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["is_active"] is False
+    listed = client.get(f"/api/v1/binance/connections/{connection.json()['id']}/spot-symbols")
+    assert listed.status_code == 200
+    assert {item["symbol"] for item in listed.json()} == {"BTCUSDT", "ETHUSDC"}
+
 
 def test_hyperliquid_rotation_rejects_secrets(client) -> None:
     portfolio = _portfolio(client)

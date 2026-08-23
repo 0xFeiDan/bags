@@ -178,6 +178,21 @@ class Account(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
+class EvmTrackedContract(Base):
+    __tablename__ = "evm_tracked_contracts"
+    __table_args__ = (
+        UniqueConstraint("account_id", "contract_address", name="evm_tracked_contract_identity"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    account_id: Mapped[UUID] = mapped_column(ForeignKey("accounts.id"), index=True)
+    contract_address: Mapped[str] = mapped_column(String(42))
+    label: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
 class ApiConnection(Base):
     __tablename__ = "api_connections"
     __table_args__ = (UniqueConstraint("account_id", "name", name="connection_name_per_account"),)
@@ -191,6 +206,23 @@ class ApiConnection(Base):
     encrypted_passphrase: Mapped[str | None] = mapped_column(Text, nullable=True)
     requested_permissions: Mapped[list] = mapped_column(JSON, default=lambda: ["read"])
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class ConnectionMarketScope(Base):
+    __tablename__ = "connection_market_scopes"
+    __table_args__ = (
+        UniqueConstraint("connection_id", "product", "symbol", name="connection_market_scope_identity"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    connection_id: Mapped[UUID] = mapped_column(ForeignKey("api_connections.id"), index=True)
+    product: Mapped[str] = mapped_column(String(16), default="spot")
+    symbol: Mapped[str] = mapped_column(String(64))
+    discovery_source: Mapped[str] = mapped_column(String(32), default="manual")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 

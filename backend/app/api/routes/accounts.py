@@ -1,7 +1,7 @@
 import re
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -10,7 +10,8 @@ from app.api.dependencies import require_recent_sensitive_auth
 from app.db import get_session
 from app.connectors.evm.chains import resolve_chain
 from app.models import Account, AccountKind, Asset, BalanceSnapshot, Portfolio
-from app.schemas import AccountCreate, AccountRead, BalanceSnapshotCreate, BalanceSnapshotRead
+from app.schemas import AccountCreate, AccountRead, AccountUpdate, BalanceSnapshotCreate, BalanceSnapshotRead
+from app.services.security import add_security_event
 
 router = APIRouter()
 EVM_ADDRESS = re.compile(r"^0x[a-fA-F0-9]{40}$")
@@ -59,12 +60,63 @@ def create_account(payload: AccountCreate, session: Session = Depends(get_sessio
 
 @router.get("", response_model=list[AccountRead])
 def list_accounts(
-    portfolio_id: UUID | None = Query(default=None), session: Session = Depends(get_session)
+    portfolio_id: UUID | None = Query(default=None),
+    include_internal: bool = Query(default=False),
+    session: Session = Depends(get_session),
 ) -> list[Account]:
     statement = select(Account).order_by(Account.provider, Account.label)
     if portfolio_id:
         statement = statement.where(Account.portfolio_id == portfolio_id)
-    return list(session.scalars(statement))
+    accounts = list(session.scalars(statement))
+    if include_internal:
+        return accounts
+    account_ids = {account.id for account in accounts}
+    visible: list[Account] = []
+    for account in accounts:
+        identity = account.external_account_id or ""
+        root_value, separator, product = identity.rpartition(":")
+        internal = False
+        if account.provider == "binance" and separator and product in {"usdm", "coinm"}:
+            try:
+                internal = UUID(root_value) in account_ids
+            except ValueError:
+                internal = False
+        if not internal:
+            visible.append(account)
+    return visible
+
+
+@router.patch(
+    "/{account_id}",
+    response_model=AccountRead,
+    dependencies=[Depends(require_recent_sensitive_auth)],
+)
+def update_account(
+    account_id: UUID,
+    payload: AccountUpdate,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Account:
+    account = session.get(Account, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="account not found")
+    fields: list[str] = []
+    if payload.label is not None:
+        account.label = payload.label.strip()
+        fields.append("label")
+    if payload.is_active is not None:
+        account.is_active = payload.is_active
+        fields.append("is_active")
+    add_security_event(
+        session,
+        request,
+        "account_updated",
+        request.state.user.id,
+        {"account_id": str(account.id), "provider": account.provider, "fields": fields},
+    )
+    session.commit()
+    session.refresh(account)
+    return account
 
 
 @router.post(

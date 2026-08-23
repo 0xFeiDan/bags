@@ -108,15 +108,28 @@ The request can select `spot`, `usdm`, and `coinm`, plus the historical markets 
 ```
 
 Binance requires a market identifier for every Spot, USD-M, and COIN-M trade-history
-query. If a futures market list is omitted, Bags only derives markets from current
-positions and returns a coverage warning. A first sync defaults to 90 days; later
-default syncs use the saved cursor with a five-minute overlap. Explicit dates perform
-a backfill. Binance currently limits USD-M trades to six months and USD-M income to
-three months; the sync result reports these source limitations.
+query. For Spot, Bags now reads balances first, discovers supported markets from the
+current non-zero holdings, and persists those markets as connection scopes. Persisted
+scopes continue to sync after a holding reaches zero. Assets that were already closed
+before discovery are intentionally not exhaustively scanned; add those markets
+manually through the connection page or the Spot symbol endpoints below. If a futures
+market list is omitted, Bags only derives markets from current positions and returns a
+coverage warning. A first sync defaults to 90 days; later default syncs use the saved
+per-market cursor with a five-minute overlap. Explicit dates perform a backfill.
+Binance currently limits USD-M trades to six months and USD-M income to three months;
+the sync result reports these source limitations.
+
+Spot, USD-M, and COIN-M remain separate internal ledger scopes so their balances,
+positions, cursors, and raw sources stay auditable, but they are exposed in the API
+and dashboard as one Binance account. Use `GET /api/v1/accounts?include_internal=true`
+only for diagnostics that need the internal product-ledger records.
 
 Useful read endpoints:
 
 - `GET /api/v1/binance/connections/{connection_id}/sync-runs`
+- `GET /api/v1/binance/connections/{connection_id}/spot-symbols`
+- `POST /api/v1/binance/connections/{connection_id}/spot-symbols`
+- `PATCH /api/v1/binance/connections/{connection_id}/spot-symbols/{scope_id}`
 - `GET /api/v1/binance/accounts/{account_id}/positions`
 - `GET /api/v1/raw-events`
 - `GET /api/v1/ledger/events`
@@ -190,6 +203,13 @@ the configured lookback and later runs resume from `last_synced_block`. ERC-20
 returned in `failed_ranges_json`, makes the run partial, and prevents the normal
 cursor from advancing.
 
+The same public address may be registered once per configured EVM chain. The
+connection page groups those chain accounts into one wallet manager where a display
+name, additional networks, active state, precise backfills, and persistent token
+contracts can be maintained. Deactivation only stops future reads and never deletes
+raw events or ledger history. Persistent contracts are included in ordinary later
+syncs without having to submit `token_contracts` again.
+
 Each relevant transaction stores the original transaction, receipt, and wallet-facing
 transfer logs before normalization. Native value, ERC-20 movements, and receipt-
 verified gas (`gasUsed * effectiveGasPrice`) become separate ledger entries. Balances
@@ -207,6 +227,10 @@ Useful endpoints:
 
 - `POST /api/v1/evm/accounts/{account_id}/sync`
 - `GET /api/v1/evm/accounts/{account_id}/sync-runs`
+- `GET /api/v1/evm/accounts/{account_id}/tracked-contracts`
+- `POST /api/v1/evm/accounts/{account_id}/tracked-contracts`
+- `PATCH /api/v1/evm/accounts/{account_id}/tracked-contracts/{contract_id}`
+- `PATCH /api/v1/accounts/{account_id}`
 - `GET /api/v1/accounts/{account_id}/balance-snapshots`
 - `GET /api/v1/raw-events?account_id={account_id}`
 - `GET /api/v1/ledger/events`
@@ -345,6 +369,9 @@ Open `/connections.html` after signing in to create a Portfolio, add an encrypte
 read-only connection, verify the administrator password/TOTP, and immediately run
 the first synchronization. The page supports Binance, Bybit, Bitget, Hyperliquid,
 and configured EVM wallets; it never reads a stored secret back into the browser.
+It also provides inline management for grouped EVM wallet networks/contracts and
+Binance Spot symbol scopes. Every mutation requires a fresh sensitive-operation
+verification, and disabling a scope preserves existing accounting history.
 
 Bybit uses the V5 Unified API:
 

@@ -317,7 +317,7 @@
   }
 
   function accountLabel(summary, id) {
-    return summary.accounts.find((account) => account.account_id === id)?.label || '未知账户';
+    return summary.accounts.find((account) => account.account_id === id || account.source_account_ids?.includes(id))?.label || '未知账户';
   }
 
   function assetSymbol(summary, id) {

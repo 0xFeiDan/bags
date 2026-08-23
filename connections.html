@@ -192,6 +192,61 @@
       <div class="section-head"><div><h2 id="connectionsTitle">连接与同步状态</h2><p>这里显示真实账户、最近一次同步和可恢复操作。</p></div><button class="secondary-action compact" id="refreshConnections" type="button">刷新状态</button></div>
       <div class="connections-list" id="connectionsList"><div class="loading-row">正在读取账户…</div></div>
     </section>
+
+    <section class="manager-panel" id="connectionManager" aria-labelledby="managerTitle" hidden>
+      <div class="manager-head">
+        <div><span class="eyebrow">只读账户管理</span><h2 id="managerTitle">管理账户</h2><p id="managerLead">修改展示名称和后续读取范围，不会删除已经入账的历史。</p></div>
+        <button class="manager-close" id="closeManager" type="button" aria-label="关闭账户管理">×</button>
+      </div>
+      <div class="form-message manager-message" id="managerMessage" role="status" aria-live="polite"></div>
+
+      <div class="manager-body" data-manager-view="evm" hidden>
+        <div class="manager-summary">
+          <div><small>公开地址</small><b class="mono" id="managerWalletAddress">—</b></div>
+          <div><small>归属 Portfolio</small><b id="managerPortfolioName">—</b></div>
+        </div>
+
+        <section class="manager-block" aria-labelledby="walletNameTitle">
+          <div class="manager-block-head"><div><h3 id="walletNameTitle">展示名称</h3><p>同一地址下的链账户会保持统一前缀。</p></div></div>
+          <div class="inline-editor"><label class="field"><span>钱包名称</span><input id="managerWalletLabel" maxlength="120" /></label><button class="primary-action" id="saveWalletLabel" type="button">保存名称</button></div>
+        </section>
+
+        <section class="manager-block" aria-labelledby="walletNetworksTitle">
+          <div class="manager-block-head"><div><h3 id="walletNetworksTitle">读取网络</h3><p>一个 EVM 地址可绑定多条链；停用只停止后续同步，不删除历史。</p></div></div>
+          <div class="manager-items" id="managerNetworks"><div class="loading-row">正在读取网络…</div></div>
+          <fieldset class="manager-choice" id="managerAvailableChains"><legend>新增 EVM 网络</legend></fieldset>
+          <div class="manager-actions"><button class="secondary-action" id="addWalletChains" type="button">添加所选网络并同步</button><button class="secondary-action" id="addHyperliquidNetwork" type="button">添加 Hyperliquid</button></div>
+        </section>
+
+        <section class="manager-block" aria-labelledby="trackedContractsTitle">
+          <div class="manager-block-head"><div><h3 id="trackedContractsTitle">跟踪代币合约</h3><p>按链保存合约地址；之后普通同步也会继续读取这些资产。</p></div><label class="compact-field"><span>选择网络</span><select id="managerContractChain"></select></label></div>
+          <div class="manager-items" id="managerContracts"><div class="empty-row">请选择一条 EVM 网络。</div></div>
+          <div class="stack-editor"><label class="field"><span>新增合约地址（每行或逗号分隔）</span><textarea id="managerContractAddresses" rows="3" placeholder="0x…"></textarea></label><button class="secondary-action" id="addTrackedContracts" type="button">保存合约</button></div>
+        </section>
+
+        <section class="manager-block" aria-labelledby="walletBackfillTitle">
+          <div class="manager-block-head"><div><h3 id="walletBackfillTitle">精确补扫</h3><p>仅补扫当前选中的 EVM 网络；留空区块时可按交易哈希定点读取。</p></div></div>
+          <div class="backfill-grid"><label class="field"><span>起始区块（可选）</span><input id="managerFromBlock" type="number" min="0" inputmode="numeric" /></label><label class="field"><span>结束区块（可选）</span><input id="managerToBlock" type="number" min="0" inputmode="numeric" /></label><label class="field span-two"><span>交易哈希（每行或逗号分隔）</span><textarea id="managerTransactionHashes" rows="3" placeholder="0x…"></textarea></label></div>
+          <div class="manager-actions"><button class="primary-action" id="backfillWallet" type="button">开始补扫</button></div>
+        </section>
+      </div>
+
+      <div class="manager-body" data-manager-view="binance" hidden>
+        <div class="policy-callout"><b>现货成交范围</b><p>系统先读取当前非零持仓，再自动发现对应交易对。已经平仓且从未发现过的旧币种不会追溯；一旦发现或手动添加，持仓归零后仍会继续增量同步。</p></div>
+        <section class="manager-block" aria-labelledby="spotSymbolsTitle">
+          <div class="manager-block-head"><div><h3 id="spotSymbolsTitle">已保存交易对</h3><p>可停用不再需要的范围；停用不会删除已导入成交。</p></div></div>
+          <div class="manager-items" id="managerSpotSymbols"><div class="loading-row">正在读取交易对…</div></div>
+          <div class="stack-editor"><label class="field"><span>新增交易对（每行或逗号分隔）</span><textarea id="managerSpotSymbolInput" rows="3" placeholder="BTCUSDT&#10;ETHUSDT"></textarea></label><label class="field"><span>首次补扫起点（可选）</span><input id="managerSpotHistoryStart" type="datetime-local" /></label><button class="primary-action" id="addSpotSymbols" type="button">添加并补扫</button></div>
+        </section>
+      </div>
+
+      <section class="manager-auth" id="managerAuth" aria-labelledby="managerAuthTitle" hidden>
+        <div><h3 id="managerAuthTitle">确认敏感操作</h3><p id="managerAuthLead">重新验证管理员身份后继续。</p></div>
+        <div class="verify-panel"><label class="field"><span>当前登录密码</span><input id="managerPassword" type="password" autocomplete="current-password" /></label><label class="field" id="managerTotpField" hidden><span>六位 TOTP 验证码</span><input id="managerTotp" inputmode="numeric" pattern="^\d{6}$" maxlength="6" autocomplete="one-time-code" /></label></div>
+        <div class="form-message" id="managerAuthMessage" role="alert"></div>
+        <div class="manager-actions"><button class="secondary-action" id="cancelManagerAuth" type="button">取消</button><button class="primary-action" id="confirmManagerAuth" type="button">验证并继续</button></div>
+      </section>
+    </section>
   </main>
 </body>
 </html>

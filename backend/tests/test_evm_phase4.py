@@ -276,6 +276,33 @@ def test_evm_wallet_account_api_normalizes_chain_and_rejects_secret_fields(clien
     assert same_address_other_chain.status_code == 201, same_address_other_chain.text
     assert same_address_other_chain.json()["external_account_id"] == f"56:{WALLET}"
 
+    renamed = client.patch(
+        f"/api/v1/accounts/{created.json()['id']}",
+        json={"label": "Main Wallet · Base"},
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["label"] == "Main Wallet · Base"
+    assert renamed.json()["address"] == WALLET
+    assert renamed.json()["chain_id"] == "8453"
+
+    tracked = client.post(
+        f"/api/v1/evm/accounts/{created.json()['id']}/tracked-contracts",
+        json={"contracts": [{"contract_address": TOKEN.upper().replace("0X", "0x"), "label": "Test USD"}]},
+    )
+    assert tracked.status_code == 201, tracked.text
+    assert tracked.json()[0]["contract_address"] == TOKEN
+    assert tracked.json()[0]["is_active"] is True
+
+    disabled = client.patch(
+        f"/api/v1/evm/accounts/{created.json()['id']}/tracked-contracts/{tracked.json()[0]['id']}",
+        json={"is_active": False},
+    )
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["is_active"] is False
+    listed = client.get(f"/api/v1/evm/accounts/{created.json()['id']}/tracked-contracts")
+    assert listed.status_code == 200
+    assert listed.json()[0]["label"] == "Test USD"
+
     rejected = client.post(
         "/api/v1/accounts",
         json={
