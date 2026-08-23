@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.models import (
     Account,
@@ -380,6 +380,35 @@ def test_derivative_pnl_is_separate_from_spot_cost_lots(db_session):
     assert record.category == "derivative"
     assert record.realized_pnl_usd == Decimal("98")
     assert db_session.scalar(select(CostLot).where(CostLot.run_id == run.id, CostLot.asset_id == usdc.id)) is None
+
+
+def test_usdt_and_usdc_market_values_do_not_require_price_rows(db_session):
+    portfolio, exchange, _, _, _, usdt, usdc = seed_foundation(db_session)
+    occurred_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    add_event(
+        db_session,
+        portfolio,
+        LedgerEventType.DEPOSIT,
+        occurred_at,
+        [
+            (exchange, usdt, EntryDirection.CREDIT, "100", False),
+            (exchange, usdc, EntryDirection.CREDIT, "25", False),
+        ],
+    )
+    db_session.execute(delete(AssetPrice))
+    db_session.commit()
+
+    run = CostBasisService(db_session).calculate(portfolio.id, CostBasisRunRequest(as_of=datetime.now(timezone.utc)))
+    positions = {
+        row.asset_id: row
+        for row in db_session.scalars(select(PositionCostSnapshot).where(PositionCostSnapshot.run_id == run.id))
+    }
+
+    assert run.status == SyncRunStatus.SUCCEEDED
+    assert positions[usdt.id].market_price_usd == Decimal("1")
+    assert positions[usdt.id].market_value_usd == Decimal("100")
+    assert positions[usdc.id].market_price_usd == Decimal("1")
+    assert positions[usdc.id].market_value_usd == Decimal("25")
 
 
 def test_cost_basis_http_api_calculates_and_protects_manual_inputs(client):

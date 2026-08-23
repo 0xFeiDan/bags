@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.models import (
     Account,
@@ -222,6 +222,31 @@ def test_internal_transfer_does_not_change_nav_or_external_flow(db_session):
     assert second.total_nav == Decimal("100")
     assert second.external_flow == Decimal("0")
     assert second.investment_pnl == Decimal("0")
+
+
+def test_usdt_balance_and_usdc_equity_are_fixed_at_one_dollar_without_prices(db_session):
+    portfolio, exchange, _, perp, _, usdt, _ = seed_foundation(db_session)
+    at = datetime.now(timezone.utc) - timedelta(hours=1)
+    add_event(
+        db_session,
+        portfolio,
+        LedgerEventType.DEPOSIT,
+        at - timedelta(minutes=10),
+        [(exchange, usdt, EntryDirection.CREDIT, "100", False)],
+    )
+    add_perp_state(db_session, perp, at, equity="25", unrealized="2", margin="5", quantity="0.1", mark="500")
+    equity = db_session.scalar(select(AccountEquitySnapshot).where(AccountEquitySnapshot.account_id == perp.id))
+    equity.currency = "USDC"
+    db_session.execute(delete(AssetPrice))
+    db_session.commit()
+
+    snapshot = DashboardService(db_session).capture_snapshot(portfolio.id, at)
+    summary = DashboardService(db_session).summary(portfolio.id, run_id=snapshot.source_cost_run_id)
+
+    assert snapshot.total_nav == Decimal("125")
+    assert summary.cash_usd == Decimal("100")
+    assert summary.perp_equity_usd == Decimal("25")
+    assert summary.health.valuation_complete is True
 
 
 def test_missing_price_returns_incomplete_nav_instead_of_false_zero(db_session):

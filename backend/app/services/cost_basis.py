@@ -44,6 +44,7 @@ ONE_HUNDRED = Decimal("100")
 # insufficient-inventory event after persistence round-trips.
 EPSILON = Decimal("0.000000000001")
 STABLE_SYMBOLS = {"USD", "USDT", "USDC", "FDUSD", "DAI", "USDE", "USD1", "PYUSD", "TUSD"}
+USD_PAR_SYMBOLS = {"USD", "USDT", "USDC"}
 TRANSFER_SOURCE_TYPES = {LedgerEventType.WITHDRAW, LedgerEventType.TRANSFER_OUT}
 TRANSFER_DESTINATION_TYPES = {LedgerEventType.DEPOSIT, LedgerEventType.TRANSFER_IN}
 
@@ -672,7 +673,7 @@ class CostBasisService:
             manual = self._position_override(portfolio_id, account_id, asset_id, as_of)
             effective = manual if manual is not None else calculated
             asset = self.assets.get(asset_id) or self.session.get(Asset, asset_id)
-            price = Decimal("1") if asset and asset.asset_type == AssetType.FIAT and asset.canonical_symbol == "USD" else self._price(asset_id, as_of)
+            price = self._price(asset_id, as_of)
             market_value = None if price is None else quantity * price
             unrealized = None if market_value is None or effective is None else market_value - effective
             unrealized_percent = None if unrealized is None or effective is None or effective == ZERO else unrealized / effective * ONE_HUNDRED
@@ -749,15 +750,18 @@ class CostBasisService:
         )
 
     def _entry_value(self, entry: LedgerEntry, at: datetime) -> Decimal | None:
+        asset = self.assets.get(entry.asset_id) or self.session.get(Asset, entry.asset_id)
+        if asset and asset.canonical_symbol.upper() in USD_PAR_SYMBOLS:
+            return entry.quantity
         if entry.unit_price_usd is not None:
             return entry.quantity * entry.unit_price_usd
-        asset = self.assets.get(entry.asset_id) or self.session.get(Asset, entry.asset_id)
-        if asset and asset.asset_type == AssetType.FIAT and asset.canonical_symbol == "USD":
-            return entry.quantity
         price = self._price(entry.asset_id, at)
         return None if price is None else entry.quantity * price
 
     def _price(self, asset_id: UUID, at: datetime) -> Decimal | None:
+        asset = self.assets.get(asset_id) or self.session.get(Asset, asset_id)
+        if asset and asset.canonical_symbol.upper() in USD_PAR_SYMBOLS:
+            return Decimal("1")
         row = self.session.scalar(
             select(AssetPrice)
             .where(AssetPrice.asset_id == asset_id, AssetPrice.as_of <= at)

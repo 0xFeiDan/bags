@@ -53,7 +53,7 @@ from app.schemas import (
     DashboardPositionRead,
     DashboardSummaryRead,
 )
-from app.services.cost_basis import CostBasisService, STABLE_SYMBOLS
+from app.services.cost_basis import CostBasisService, USD_PAR_SYMBOLS
 from app.services.security import as_utc
 
 ZERO = Decimal("0")
@@ -1028,7 +1028,15 @@ class DashboardService:
                 if entry.direction != expected_direction:
                     continue
                 asset = self.session.get(Asset, entry.asset_id)
-                price = entry.unit_price_usd if entry.unit_price_usd is not None else self._asset_price(asset, as_utc(event.occurred_at)) if asset else None
+                price = (
+                    self._asset_price(asset, as_utc(event.occurred_at))
+                    if asset and asset.canonical_symbol.upper() in USD_PAR_SYMBOLS
+                    else entry.unit_price_usd
+                    if entry.unit_price_usd is not None
+                    else self._asset_price(asset, as_utc(event.occurred_at))
+                    if asset
+                    else None
+                )
                 if price is None:
                     complete = False
                 else:
@@ -1176,7 +1184,7 @@ class DashboardService:
         return total
 
     def _asset_price(self, asset: Asset, at: datetime) -> Decimal | None:
-        if asset.asset_type == AssetType.FIAT and asset.canonical_symbol == "USD":
+        if asset.canonical_symbol.upper() in USD_PAR_SYMBOLS:
             return Decimal("1")
         key = (asset.id, at)
         if key not in self._price_cache:
@@ -1191,15 +1199,16 @@ class DashboardService:
 
     def _currency_price(self, symbol: str, at: datetime) -> Decimal | None:
         normalized = symbol.upper()
-        if normalized == "USD":
+        if normalized in USD_PAR_SYMBOLS:
             return Decimal("1")
         asset = self.session.scalar(select(Asset).where(Asset.canonical_symbol == normalized, Asset.chain_id.is_(None)).limit(1))
         return self._asset_price(asset, at) if asset else None
 
     @staticmethod
     def _is_cash(asset: Asset) -> bool:
-        # Stablecoins are presented as cash, but their actual USD price still
-        # comes from AssetPrice (no hard-coded one-dollar valuation).
+        # Stablecoins are presented as cash. USD, USDT, and USDC use the
+        # product's configured one-dollar accounting convention; other
+        # stablecoins still require an observed AssetPrice.
         return asset.asset_type == AssetType.STABLECOIN or (
             asset.asset_type == AssetType.FIAT and asset.canonical_symbol == "USD"
         )
