@@ -88,7 +88,6 @@ class DashboardService:
         current_at = as_utc(run.as_of)
         accounts = list(self.session.scalars(select(Account).where(Account.portfolio_id == portfolio_id)))
         account_map = {account.id: account for account in accounts}
-        logical_accounts = self._logical_account_roots(accounts)
         cost_positions = list(self.session.scalars(select(PositionCostSnapshot).where(PositionCostSnapshot.run_id == run.id)))
         records = list(self.session.scalars(select(RealizedPnlRecord).where(RealizedPnlRecord.run_id == run.id)))
         event_ids = {record.ledger_event_id for record in records}
@@ -215,7 +214,7 @@ class DashboardService:
         unrealized = None if spot_unrealized is None or not perp_unrealized_complete else spot_unrealized + perp_unrealized
         all_time_pnl = None if realized is None or unrealized is None else realized + unrealized
 
-        position_views = self._position_views(latest_positions, account_map, logical_accounts)
+        position_views = self._position_views(latest_positions, account_map)
         exposure_views = self._exposures(cost_positions, latest_positions, assets, skip_cost_accounts)
         gross_long = sum((row.gross_long_usd for row in exposure_views), ZERO)
         gross_short = sum((row.gross_short_usd for row in exposure_views), ZERO)
@@ -223,7 +222,7 @@ class DashboardService:
         margin_base = sum((max(value, ZERO) for value in derivative_values.values()), ZERO)
         margin_usage = None if margin_base <= ZERO else margin_used / margin_base * HUNDRED
 
-        assets_view = self._asset_views(run, asset_rows, assets, records, logical_accounts)
+        assets_view = self._asset_views(run, asset_rows, assets, records)
         accounts_view = self._account_views(
             accounts,
             account_spot,
@@ -238,8 +237,6 @@ class DashboardService:
             latest_positions,
             self._spot_unrealized_by_account(cost_positions, skip_cost_accounts),
             current_at,
-            logical_accounts,
-            account_map,
         )
         denominator = total_nav if total_nav is not None and total_nav > ZERO else None
         asset_allocation = self._asset_allocation(assets_view, denominator)
@@ -633,12 +630,7 @@ class DashboardService:
         multiplier = self._currency_price(margin_asset, as_utc(row.as_of))
         return None if multiplier is None else row.unrealized_pnl * multiplier
 
-    def _position_views(
-        self,
-        rows: list[PositionSnapshot],
-        accounts: dict[UUID, Account],
-        logical_accounts: dict[UUID, UUID],
-    ) -> list[DashboardPositionRead]:
+    def _position_views(self, rows: list[PositionSnapshot], accounts: dict[UUID, Account]) -> list[DashboardPositionRead]:
         result: list[DashboardPositionRead] = []
         for row in rows:
             notional = abs(row.notional) if row.notional is not None else (
@@ -653,11 +645,10 @@ class DashboardService:
                     margin = None
             if margin is None and notional is not None and row.leverage is not None and row.leverage > ZERO:
                 margin = notional / row.leverage
-            logical_id = logical_accounts.get(row.account_id, row.account_id)
-            account = accounts.get(logical_id) or accounts.get(row.account_id)
+            account = accounts.get(row.account_id)
             result.append(
                 DashboardPositionRead(
-                    account_id=logical_id,
+                    account_id=row.account_id,
                     account_label=account.label if account else str(row.account_id),
                     product=row.product,
                     symbol=row.symbol,
@@ -739,7 +730,6 @@ class DashboardService:
         grouped: dict[UUID, list[PositionCostSnapshot]],
         assets: dict[UUID, Asset],
         records: list[RealizedPnlRecord],
-        logical_accounts: dict[UUID, UUID],
     ) -> list[DashboardAssetRead]:
         pnl_by_asset: dict[UUID, list[RealizedPnlRecord]] = defaultdict(list)
         for record in records:
@@ -803,7 +793,7 @@ class DashboardService:
                     unrealized_pnl_usd=money(unrealized),
                     unrealized_pnl_percent=money(unrealized_pct),
                     realized_pnl_usd=money(realized),
-                    account_count=len({logical_accounts.get(row.account_id, row.account_id) for row in rows}),
+                    account_count=len({row.account_id for row in rows}),
                     open_lot_count=lot_count,
                     valuation_complete=market is not None and effective is not None,
                 )
@@ -825,8 +815,6 @@ class DashboardService:
         position_rows: list[PositionSnapshot],
         spot_unrealized: dict[UUID, Decimal | None],
         as_of: datetime,
-        logical_accounts: dict[UUID, UUID],
-        account_map: dict[UUID, Account],
     ) -> list[DashboardAccountRead]:
         records_by_account: dict[UUID, list[RealizedPnlRecord]] = defaultdict(list)
         for record in records:
@@ -859,7 +847,6 @@ class DashboardService:
             result.append(
                 DashboardAccountRead(
                     account_id=account.id,
-                    source_account_ids=[account.id],
                     label=account.label,
                     provider=account.provider,
                     kind=account.kind.value,
@@ -875,71 +862,6 @@ class DashboardService:
                     margin_used_usd=money(equity.margin_used * self._currency_price(equity.currency, as_of)) if equity and equity.margin_used is not None and self._currency_price(equity.currency, as_of) is not None else None,
                     last_synced_at=last_sync.get(account.id),
                     valuation_complete=complete,
-                )
-            )
-        return self._collapse_logical_account_views(result, logical_accounts, account_map)
-
-    @staticmethod
-    def _logical_account_roots(accounts: list[Account]) -> dict[UUID, UUID]:
-        """Map internal Binance product ledgers to their user-facing root account."""
-        by_id = {account.id: account for account in accounts}
-        result = {account.id: account.id for account in accounts}
-        for account in accounts:
-            if account.provider.lower() != "binance" or not account.external_account_id:
-                continue
-            root_value, separator, product = account.external_account_id.rpartition(":")
-            if not separator or product not in {"usdm", "coinm"}:
-                continue
-            try:
-                root_id = UUID(root_value)
-            except ValueError:
-                continue
-            root = by_id.get(root_id)
-            if root and root.provider.lower() == "binance" and root.portfolio_id == account.portfolio_id:
-                result[account.id] = root.id
-        return result
-
-    @staticmethod
-    def _collapse_logical_account_views(
-        rows: list[DashboardAccountRead],
-        logical_accounts: dict[UUID, UUID],
-        account_map: dict[UUID, Account],
-    ) -> list[DashboardAccountRead]:
-        grouped: dict[UUID, list[DashboardAccountRead]] = defaultdict(list)
-        for row in rows:
-            grouped[logical_accounts.get(row.account_id, row.account_id)].append(row)
-
-        def nullable_sum(items: list[DashboardAccountRead], field: str) -> Decimal | None:
-            values = [getattr(item, field) for item in items]
-            return None if any(value is None for value in values) else sum(values, ZERO)
-
-        result: list[DashboardAccountRead] = []
-        for root_id, items in grouped.items():
-            if len(items) == 1 and items[0].account_id == root_id:
-                result.append(items[0])
-                continue
-            root = account_map.get(root_id)
-            source_ids = list(dict.fromkeys(source_id for item in items for source_id in item.source_account_ids))
-            last_synced = [item.last_synced_at for item in items if item.last_synced_at]
-            result.append(
-                DashboardAccountRead(
-                    account_id=root_id,
-                    source_account_ids=source_ids,
-                    label=root.label if root else items[0].label.split(" · ", 1)[0],
-                    provider=root.provider if root else items[0].provider,
-                    kind=root.kind.value if root else items[0].kind,
-                    chain_id=root.chain_id if root else items[0].chain_id,
-                    spot_value_usd=sum((item.spot_value_usd for item in items), ZERO),
-                    cash_usd=sum((item.cash_usd for item in items), ZERO),
-                    perp_equity_usd=sum((item.perp_equity_usd for item in items), ZERO),
-                    total_equity_usd=nullable_sum(items, "total_equity_usd"),
-                    realized_pnl_usd=nullable_sum(items, "realized_pnl_usd"),
-                    unrealized_pnl_usd=nullable_sum(items, "unrealized_pnl_usd"),
-                    funding_pnl_usd=nullable_sum(items, "funding_pnl_usd"),
-                    fee_expense_usd=nullable_sum(items, "fee_expense_usd"),
-                    margin_used_usd=nullable_sum(items, "margin_used_usd"),
-                    last_synced_at=max(last_synced) if last_synced else None,
-                    valuation_complete=all(item.valuation_complete for item in items),
                 )
             )
         return sorted(result, key=lambda row: row.total_equity_usd or ZERO, reverse=True)

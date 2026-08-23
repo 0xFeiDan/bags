@@ -11,6 +11,7 @@ from app.models import (
     AssetType,
     CostMethod,
     CostOverrideType,
+    DataSourceMode,
     EntryDirection,
     EventSource,
     EventStatus,
@@ -81,19 +82,6 @@ class AccountCreate(BaseModel):
     address: str | None = Field(default=None, max_length=256)
 
 
-class AccountUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    label: str | None = Field(default=None, min_length=1, max_length=120)
-    is_active: bool | None = None
-
-    @model_validator(mode="after")
-    def has_update(self):
-        if self.label is None and self.is_active is None:
-            raise ValueError("at least one account field must be updated")
-        return self
-
-
 class AccountRead(Schema):
     id: UUID
     portfolio_id: UUID
@@ -107,52 +95,72 @@ class AccountRead(Schema):
     created_at: datetime
 
 
-class EvmTrackedContractInput(BaseModel):
+class ZerionDataSourceUpsert(BaseModel):
+    """Phase 1 intentionally accepts shadow mode only; it cannot invoke Zerion."""
+
     model_config = ConfigDict(extra="forbid")
 
-    contract_address: str
-    label: str | None = Field(default=None, max_length=120)
-
-    @field_validator("contract_address")
-    @classmethod
-    def valid_contract(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if len(normalized) != 42 or not normalized.startswith("0x"):
-            raise ValueError("contract address must be a 42-character EVM address")
-        try:
-            int(normalized[2:], 16)
-        except ValueError as error:
-            raise ValueError("contract address must be hexadecimal") from error
-        return normalized
-
-
-class EvmTrackedContractBulkCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    contracts: list[EvmTrackedContractInput] = Field(min_length=1, max_length=250)
-
-
-class EvmTrackedContractUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    label: str | None = Field(default=None, max_length=120)
-    is_active: bool | None = None
+    is_enabled: bool = False
+    mode: DataSourceMode = DataSourceMode.DISABLED
 
     @model_validator(mode="after")
-    def has_update(self):
-        if "label" not in self.model_fields_set and self.is_active is None:
-            raise ValueError("at least one tracked contract field must be updated")
+    def only_allow_phase_one_modes(self):
+        if self.mode == DataSourceMode.ACTIVE:
+            raise ValueError("Zerion active mode is unavailable until shadow reconciliation passes")
+        if self.is_enabled and self.mode != DataSourceMode.SHADOW:
+            raise ValueError("an enabled Zerion source must use shadow mode")
         return self
 
 
-class EvmTrackedContractRead(Schema):
+class ZerionDataSourceRead(Schema):
     id: UUID
     account_id: UUID
-    contract_address: str
-    label: str | None
-    is_active: bool
+    provider: str
+    mode: DataSourceMode
+    is_enabled: bool
+    requests_per_second_limit: int
+    daily_request_limit: int
+    max_requests_per_run: int
+    min_sync_interval_seconds: int
+    daily_request_budget: int
+    remote_subscription_id: str | None
+    cursor_value: str | None
+    last_synced_at: datetime | None
+    next_sync_after: datetime | None
+    zerion_configured: bool
     created_at: datetime
     updated_at: datetime
+
+
+class ZerionStatusRead(BaseModel):
+    configured: bool
+    requests_per_second_limit: int
+    daily_request_limit: int
+    daily_request_budget: int
+    max_requests_per_run: int
+    min_sync_interval_seconds: int
+
+
+class ProviderSyncRunRead(Schema):
+    id: UUID
+    data_source_id: UUID
+    request_kind: str
+    status: SyncRunStatus
+    request_budget: int
+    request_count: int
+    stats_json: dict[str, Any]
+    warnings_json: list[Any]
+    rate_limit_json: dict[str, Any]
+    error_code: str | None
+    error_message: str | None
+    started_at: datetime
+    finished_at: datetime | None
+
+
+class ZerionShadowSyncRequest(BaseModel):
+    """Reserved request body for a manual, bounded shadow run."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class ConnectionCreate(BaseModel):
@@ -361,38 +369,6 @@ class BinanceSyncRead(Schema):
     error_message: str | None
     started_at: datetime
     finished_at: datetime | None
-
-
-class BinanceSpotSymbolBulkCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    symbols: list[str] = Field(min_length=1, max_length=200)
-
-    @field_validator("symbols")
-    @classmethod
-    def normalize_symbols(cls, symbols: list[str]) -> list[str]:
-        normalized = list(dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip()))
-        if not normalized or any(not symbol.isalnum() or len(symbol) > 64 for symbol in normalized):
-            raise ValueError("Spot symbols must be alphanumeric exchange symbols")
-        return normalized
-
-
-class BinanceSpotSymbolUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    is_active: bool
-
-
-class BinanceSpotSymbolRead(Schema):
-    id: UUID
-    connection_id: UUID
-    product: str
-    symbol: str
-    discovery_source: str
-    is_active: bool
-    last_synced_at: datetime | None
-    created_at: datetime
-    updated_at: datetime
 
 
 class BybitSyncRequest(BaseModel):
@@ -922,7 +898,6 @@ class DashboardAssetRead(BaseModel):
 
 class DashboardAccountRead(BaseModel):
     account_id: UUID
-    source_account_ids: list[UUID]
     label: str
     provider: str
     kind: str

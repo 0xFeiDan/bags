@@ -24,7 +24,6 @@ from app.models import (
     TransferGroupStatus,
 )
 from app.services.dashboard import DashboardService
-from app.schemas import DashboardAccountRead
 
 
 def seed_foundation(db_session, name="Dashboard Portfolio"):
@@ -136,74 +135,6 @@ def add_perp_state(db_session, account, at, *, equity, unrealized, margin, quant
         ]
     )
     db_session.commit()
-
-
-def test_binance_product_ledgers_are_presented_as_one_account(db_session):
-    portfolio = Portfolio(name="Grouped Binance")
-    root = Account(portfolio_id=portfolio.id, kind=AccountKind.EXCHANGE, provider="binance", label="Binance", external_account_id="main")
-    db_session.add(portfolio)
-    db_session.flush()
-    root.portfolio_id = portfolio.id
-    db_session.add(root)
-    db_session.flush()
-    usdm = Account(portfolio_id=portfolio.id, kind=AccountKind.EXCHANGE, provider="binance", label="Binance · USDM", external_account_id=f"{root.id}:usdm")
-    coinm = Account(portfolio_id=portfolio.id, kind=AccountKind.EXCHANGE, provider="binance", label="Binance · COINM", external_account_id=f"{root.id}:coinm")
-    db_session.add_all([usdm, coinm])
-    db_session.flush()
-    at = datetime.now(timezone.utc)
-    accounts = [root, usdm, coinm]
-    mapping = DashboardService._logical_account_roots(accounts)
-    rows = [
-        DashboardAccountRead(
-            account_id=account.id,
-            source_account_ids=[account.id],
-            label=account.label,
-            provider="binance",
-            kind="exchange",
-            chain_id=None,
-            spot_value_usd=Decimal("100") if account.id == root.id else Decimal("0"),
-            cash_usd=Decimal("50") if account.id == root.id else Decimal("0"),
-            perp_equity_usd=Decimal("200") if account.id == usdm.id else Decimal("100") if account.id == coinm.id else Decimal("0"),
-            total_equity_usd=Decimal("150") if account.id == root.id else Decimal("200") if account.id == usdm.id else Decimal("100"),
-            realized_pnl_usd=Decimal("1"),
-            unrealized_pnl_usd=Decimal("2"),
-            funding_pnl_usd=Decimal("3"),
-            fee_expense_usd=Decimal("4"),
-            margin_used_usd=None,
-            last_synced_at=at,
-            valuation_complete=True,
-        )
-        for account in accounts
-    ]
-
-    collapsed = DashboardService._collapse_logical_account_views(rows, mapping, {account.id: account for account in accounts})
-    assert len(collapsed) == 1
-    assert collapsed[0].account_id == root.id
-    assert set(collapsed[0].source_account_ids) == {root.id, usdm.id, coinm.id}
-    assert collapsed[0].label == "Binance"
-    assert collapsed[0].total_equity_usd == Decimal("450")
-    assert collapsed[0].perp_equity_usd == Decimal("300")
-
-    position = PositionSnapshot(
-        account_id=usdm.id,
-        product="usdm",
-        symbol="BTCUSDT",
-        position_side="LONG",
-        quantity=Decimal("1"),
-        entry_price=Decimal("100"),
-        mark_price=Decimal("110"),
-        unrealized_pnl=None,
-        leverage=Decimal("2"),
-        liquidation_price=Decimal("50"),
-        notional=Decimal("110"),
-        margin_asset=None,
-        isolated=False,
-        as_of=at,
-        metadata_json={},
-    )
-    position_view = DashboardService(db_session)._position_views([position], {account.id: account for account in accounts}, mapping)[0]
-    assert position_view.account_id == root.id
-    assert position_view.account_label == "Binance"
 
 
 def test_dashboard_snapshot_excludes_external_cash_flow_from_investment_pnl(db_session):

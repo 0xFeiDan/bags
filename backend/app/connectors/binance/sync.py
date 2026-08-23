@@ -19,7 +19,6 @@ from app.models import (
     AssetAlias,
     AssetType,
     BalanceSnapshot,
-    ConnectionMarketScope,
     EntryDirection,
     EventSource,
     EventStatus,
@@ -64,10 +63,6 @@ def parse_binance_datetime(value: Any, fallback: datetime) -> datetime:
     return fallback
 
 
-def as_utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
-
-
 class SyncStats:
     def __init__(self) -> None:
         self.raw_created = 0
@@ -75,8 +70,6 @@ class SyncStats:
         self.ledger_created = 0
         self.balances_created = 0
         self.positions_created = 0
-        self.spot_symbols_discovered = 0
-        self.spot_symbols_synced = 0
 
     def as_dict(self) -> dict[str, int]:
         return {
@@ -85,8 +78,6 @@ class SyncStats:
             "ledger_created": self.ledger_created,
             "balances_created": self.balances_created,
             "positions_created": self.positions_created,
-            "spot_symbols_discovered": self.spot_symbols_discovered,
-            "spot_symbols_synced": self.spot_symbols_synced,
         }
 
 
@@ -95,8 +86,6 @@ class BinancePermissionError(ValueError):
 
 
 class BinanceSyncService:
-    SPOT_QUOTE_ASSETS = ("USDT", "USDC", "FDUSD", "BTC", "ETH", "BNB")
-
     def __init__(self, session: Session, settings: Settings, *, client_factory: type[BinanceApiClient] = BinanceApiClient) -> None:
         self.session = session
         self.settings = settings
@@ -224,17 +213,13 @@ class BinanceSyncService:
         account_payload = collector.account("spot")
         self._raw(account, connection, "spot", f"account:{int(observed_at.timestamp() * 1000)}", "account", observed_at, account_payload)
         seen_balance_assets: set[UUID] = set()
-        held_assets: set[str] = set()
         for balance in account_payload.get("balances", []):
             if not isinstance(balance, dict):
                 continue
             quantity = decimal_value(balance.get("free")) + decimal_value(balance.get("locked"))
-            asset_symbol = str(balance.get("asset", "")).strip().upper()
-            asset = self._asset(asset_symbol, "spot")
+            asset = self._asset(str(balance.get("asset", "")), "spot")
             seen_balance_assets.add(asset.id)
             self._balance(account.id, asset.id, quantity, "binance:spot", observed_at)
-            if quantity > 0:
-                held_assets.add(asset_symbol)
         self._zero_missing_balances(account.id, seen_balance_assets, "binance:spot", observed_at)
 
         for deposit in collector.wallet_history("deposit", start, end):
@@ -259,101 +244,35 @@ class BinanceSyncService:
                     legs.append((asset, EntryDirection.DEBIT, fee, True))
                 self._ledger(raw, account, LedgerEventType.WITHDRAW, occurred_at, legs, tx_hash=withdrawal.get("txId"), metadata={"network": withdrawal.get("network"), "address": withdrawal.get("address")})
 
+        if not request.spot_symbols:
+            warnings.append("Spot balances and wallet history synced; Spot trades require explicit spot_symbols because Binance myTrades is symbol-scoped.")
+            return False
         invalid = [symbol for symbol in request.spot_symbols if symbol not in symbol_map]
         if invalid:
             warnings.append(f"Unknown Spot symbols skipped: {', '.join(invalid[:10])}")
-        valid_requested = [symbol for symbol in request.spot_symbols if symbol in symbol_map]
-        scopes = self._spot_scopes(connection, symbol_map, held_assets, valid_requested)
-        valid_scopes = [scope for scope in scopes if scope.symbol in symbol_map]
-        unknown_saved = [scope.symbol for scope in scopes if scope.symbol not in symbol_map]
-        if unknown_saved:
-            warnings.append(f"Saved Spot symbols no longer listed by Binance and were skipped: {', '.join(unknown_saved[:10])}")
-        if not valid_scopes:
-            warnings.append("Spot balances and wallet history synced; no trade symbols were found from current non-zero holdings. Previously closed assets are intentionally not scanned.")
+        valid_symbols = [symbol for symbol in request.spot_symbols if symbol in symbol_map]
+        if not valid_symbols:
             return False
-        for scope in valid_scopes:
-            symbol_start = start
-            if scope.last_synced_at and request.history_start is None:
-                symbol_start = max(start, as_utc(scope.last_synced_at) - timedelta(minutes=5))
-            for trade in collector.spot_trades([scope.symbol], symbol_start, end):
-                symbol = str(trade.get("symbol", ""))
-                base_symbol, quote_symbol = symbol_map[symbol]
-                occurred_at = milliseconds_to_datetime(trade.get("time"), end)
-                external_id = f"trade:{symbol}:{trade.get('id')}"
-                raw, created = self._raw(account, connection, "spot", external_id, "trade", occurred_at, trade)
-                if not created:
-                    continue
-                base = self._asset(str(base_symbol), "spot")
-                quote = self._asset(str(quote_symbol), "spot")
-                is_buyer = bool(trade.get("isBuyer"))
-                legs = [
-                    (base, EntryDirection.CREDIT if is_buyer else EntryDirection.DEBIT, decimal_value(trade.get("qty")), False),
-                    (quote, EntryDirection.DEBIT if is_buyer else EntryDirection.CREDIT, decimal_value(trade.get("quoteQty")), False),
-                ]
-                commission = decimal_value(trade.get("commission"))
-                if commission > 0 and trade.get("commissionAsset"):
-                    legs.append((self._asset(str(trade["commissionAsset"]), "spot"), EntryDirection.DEBIT, commission, True))
-                self._ledger(raw, account, LedgerEventType.BUY if is_buyer else LedgerEventType.SELL, occurred_at, legs, external_reference=str(trade.get("orderId")), metadata={"market_type": "spot", "symbol": symbol, "is_maker": trade.get("isMaker"), "price": trade.get("price")})
-            scope.last_synced_at = end
-            self.stats.spot_symbols_synced += 1
+        for trade in collector.spot_trades(valid_symbols, start, end):
+            symbol = str(trade.get("symbol", ""))
+            base_symbol, quote_symbol = symbol_map[symbol]
+            occurred_at = milliseconds_to_datetime(trade.get("time"), end)
+            external_id = f"trade:{symbol}:{trade.get('id')}"
+            raw, created = self._raw(account, connection, "spot", external_id, "trade", occurred_at, trade)
+            if not created:
+                continue
+            base = self._asset(str(base_symbol), "spot")
+            quote = self._asset(str(quote_symbol), "spot")
+            is_buyer = bool(trade.get("isBuyer"))
+            legs = [
+                (base, EntryDirection.CREDIT if is_buyer else EntryDirection.DEBIT, decimal_value(trade.get("qty")), False),
+                (quote, EntryDirection.DEBIT if is_buyer else EntryDirection.CREDIT, decimal_value(trade.get("quoteQty")), False),
+            ]
+            commission = decimal_value(trade.get("commission"))
+            if commission > 0 and trade.get("commissionAsset"):
+                legs.append((self._asset(str(trade["commissionAsset"]), "spot"), EntryDirection.DEBIT, commission, True))
+            self._ledger(raw, account, LedgerEventType.BUY if is_buyer else LedgerEventType.SELL, occurred_at, legs, external_reference=str(trade.get("orderId")), metadata={"market_type": "spot", "symbol": symbol, "is_maker": trade.get("isMaker"), "price": trade.get("price")})
         return True
-
-    def _spot_scopes(
-        self,
-        connection: ApiConnection,
-        symbol_map: dict[str, tuple[str | None, str | None]],
-        held_assets: set[str],
-        requested_symbols: list[str],
-    ) -> list[ConnectionMarketScope]:
-        existing = {
-            item.symbol: item
-            for item in self.session.scalars(
-                select(ConnectionMarketScope).where(
-                    ConnectionMarketScope.connection_id == connection.id,
-                    ConnectionMarketScope.product == "spot",
-                )
-            )
-        }
-
-        previously_seen = {
-            str(payload.get("symbol", "")).strip().upper()
-            for payload in self.session.scalars(
-                select(RawEvent.payload_json).where(
-                    RawEvent.connection_id == connection.id,
-                    RawEvent.source == "binance:spot",
-                    RawEvent.event_kind == "trade",
-                )
-            )
-            if isinstance(payload, dict) and payload.get("symbol")
-        }
-        discovered = {
-            symbol
-            for symbol, (base_asset, quote_asset) in symbol_map.items()
-            if str(base_asset or "").upper() in held_assets
-            and str(quote_asset or "").upper() in self.SPOT_QUOTE_ASSETS
-        }
-        candidates = [
-            *((symbol, "manual", True) for symbol in requested_symbols),
-            *((symbol, "existing", False) for symbol in sorted(previously_seen)),
-            *((symbol, "balance", False) for symbol in sorted(discovered)),
-        ]
-        for symbol, source, reactivate in candidates:
-            scope = existing.get(symbol)
-            if not scope:
-                scope = ConnectionMarketScope(
-                    connection_id=connection.id,
-                    product="spot",
-                    symbol=symbol,
-                    discovery_source=source,
-                )
-                self.session.add(scope)
-                existing[symbol] = scope
-                self.stats.spot_symbols_discovered += 1
-            elif reactivate:
-                scope.is_active = True
-                scope.discovery_source = "manual"
-        self.session.flush()
-        return sorted((scope for scope in existing.values() if scope.is_active), key=lambda item: item.symbol)
 
     def _sync_futures(
         self,
@@ -623,7 +542,7 @@ class BinanceSyncService:
         if not cursor or not cursor.last_synced_at:
             return fallback
         # A small overlap protects against eventually-consistent history endpoints; raw-event keys deduplicate it.
-        return max(fallback, as_utc(cursor.last_synced_at) - timedelta(minutes=5))
+        return max(fallback, cursor.last_synced_at - timedelta(minutes=5))
 
     def _balance(self, account_id: UUID, asset_id: UUID, quantity: Decimal, source: str, as_of: datetime) -> None:
         exists = self.session.scalar(

@@ -40,3 +40,19 @@ def test_phase10_corrects_only_hyperliquid_equity_units(monkeypatch) -> None:
         "UPDATE account_equity_snapshots SET currency = 'USD' "
         "WHERE provider = 'hyperliquid' AND currency = 'USDC'"
     ]
+
+
+def test_phase15_raises_only_the_retired_zerion_default_tuple(monkeypatch) -> None:
+    migration = _load_migration("20260823_0015_zerion_free_plan_limits.py")
+    statements: list[str] = []
+    monkeypatch.setattr(migration.op, "execute", statements.append)
+
+    migration.upgrade()
+
+    assert len(statements) == 2
+    assert "requests_per_second_limit = 3" in statements[0]
+    assert "daily_request_limit = 2000" in statements[0]
+    assert "requests_per_second_limit = 1" in statements[0]
+    assert "daily_request_limit = 300" in statements[0]
+    assert "request_limit = 2000" in statements[1]
+    assert "request_limit = 300" in statements[1]

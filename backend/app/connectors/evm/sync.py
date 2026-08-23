@@ -30,7 +30,6 @@ from app.models import (
     EntryDirection,
     EventSource,
     EventStatus,
-    EvmTrackedContract,
     LedgerEntry,
     LedgerEvent,
     LedgerEventType,
@@ -118,23 +117,9 @@ class EvmWalletSyncService:
                     if value
                 }
                 requested_contracts = {contract.lower() for contract in request.token_contracts}
-                tracked_contracts = {
-                    contract.lower()
-                    for contract in self.session.scalars(
-                        select(EvmTrackedContract.contract_address).where(
-                            EvmTrackedContract.account_id == account.id,
-                            EvmTrackedContract.is_active.is_(True),
-                        )
-                    )
-                }
                 discovered_contracts = {contract.lower() for contract in collection.token_contracts}
                 ordered_contracts: list[str] = []
-                for group in (
-                    sorted(requested_contracts),
-                    sorted(tracked_contracts),
-                    sorted(known_contracts),
-                    sorted(discovered_contracts),
-                ):
+                for group in (sorted(requested_contracts), sorted(known_contracts), sorted(discovered_contracts)):
                     for contract in group:
                         if contract not in ordered_contracts:
                             ordered_contracts.append(contract)

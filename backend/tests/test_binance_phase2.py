@@ -15,7 +15,6 @@ from app.models import (
     AccountKind,
     ApiConnection,
     BalanceSnapshot,
-    ConnectionMarketScope,
     LedgerEntry,
     LedgerEvent,
     LedgerEventType,
@@ -179,7 +178,7 @@ def seed_connection(session):
     return connection
 
 
-def test_all_binance_products_sync_and_second_run_is_idempotent(db_session, client):
+def test_all_binance_products_sync_and_second_run_is_idempotent(db_session):
     connection = seed_connection(db_session)
     settings = Settings(master_encryption_key=TEST_KEY)
     end = datetime(2023, 11, 15, tzinfo=timezone.utc)
@@ -199,20 +198,12 @@ def test_all_binance_products_sync_and_second_run_is_idempotent(db_session, clie
         "ledger_created": 9,
         "balances_created": 4,
         "positions_created": 2,
-        "spot_symbols_discovered": 1,
-        "spot_symbols_synced": 1,
     }
     assert db_session.scalar(select(func.count()).select_from(Account)) == 3
     assert db_session.scalar(select(func.count()).select_from(BalanceSnapshot)) == 4
     assert db_session.scalar(select(func.count()).select_from(PositionSnapshot)) == 2
     assert db_session.scalar(select(func.count()).select_from(LedgerEvent)) == 9
     assert db_session.scalar(select(func.count()).select_from(LedgerEntry).where(LedgerEntry.fee_flag.is_(True))) == 4
-    visible_accounts = client.get("/api/v1/accounts")
-    assert visible_accounts.status_code == 200
-    assert [item["label"] for item in visible_accounts.json() if item["provider"] == "binance"] == ["Binance"]
-    internal_accounts = client.get("/api/v1/accounts?include_internal=true")
-    assert internal_accounts.status_code == 200
-    assert len([item for item in internal_accounts.json() if item["provider"] == "binance"]) == 3
 
     raw_count = db_session.scalar(select(func.count()).select_from(RawEvent))
     ledger_count = db_session.scalar(select(func.count()).select_from(LedgerEvent))
@@ -270,45 +261,6 @@ def test_sync_refuses_key_with_trading_permission(db_session):
     assert run.status == SyncRunStatus.FAILED
     assert run.error_code == "BINANCE_UNSAFE_PERMISSIONS"
     assert "trading permission" in run.error_message
-
-
-class ClosedPositionBinanceClient(FakeBinanceClient):
-    def signed_get(self, product: str, path: str, params=None):
-        if path == "/api/v3/account":
-            type(self).calls.append((product, path, dict(params or {})))
-            return {"balances": [{"asset": "BTC", "free": "0", "locked": "0"}, {"asset": "USDT", "free": "1000", "locked": "0"}]}
-        return super().signed_get(product, path, params)
-
-
-def test_spot_symbols_are_discovered_from_current_holdings_and_persist_after_closing(db_session):
-    connection = seed_connection(db_session)
-    settings = Settings(master_encryption_key=TEST_KEY)
-    end = datetime(2023, 11, 15, tzinfo=timezone.utc)
-    request = BinanceSyncRequest(products=["spot"], history_start=end - timedelta(days=1), history_end=end)
-
-    first = BinanceSyncService(db_session, settings, client_factory=FakeBinanceClient).run(connection.id, request)
-    assert first.status == SyncRunStatus.SUCCEEDED
-    scope = db_session.scalar(
-        select(ConnectionMarketScope).where(
-            ConnectionMarketScope.connection_id == connection.id,
-            ConnectionMarketScope.symbol == "BTCUSDT",
-        )
-    )
-    assert scope is not None
-    assert scope.discovery_source == "balance"
-    assert scope.last_synced_at.replace(tzinfo=timezone.utc) == end
-    assert first.stats_json["spot_symbols_discovered"] == 1
-    assert first.stats_json["spot_symbols_synced"] == 1
-
-    later = end + timedelta(hours=1)
-    second = BinanceSyncService(db_session, settings, client_factory=ClosedPositionBinanceClient).run(
-        connection.id,
-        BinanceSyncRequest(products=["spot"], history_end=later),
-    )
-    assert second.status == SyncRunStatus.SUCCEEDED
-    assert any(path == "/api/v3/myTrades" and params.get("symbol") == "BTCUSDT" for _, path, params in ClosedPositionBinanceClient.calls)
-    assert second.stats_json["spot_symbols_discovered"] == 0
-    assert second.stats_json["spot_symbols_synced"] == 1
 
 
 def test_futures_trade_pagination_uses_trade_id_not_timestamp_boundary():

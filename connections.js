@@ -11,13 +11,11 @@
     accounts: [],
     connections: [],
     chains: [],
-    managerType: null,
-    managerGroupPrimaryId: null,
-    managerConnectionId: null,
-    managerContracts: [],
-    managerSpotScopes: [],
-    managerPendingAction: null,
-    managerBusy: false,
+    zerionStatus: null,
+    zerionSources: new Map(),
+    zerionRuns: new Map(),
+    zerionPendingAction: null,
+    zerionBusy: false,
   };
 
   const byId = (id) => document.getElementById(id);
@@ -588,6 +586,214 @@
     return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleString('zh-CN', { hour12: false });
   }
 
+  function compactAddress(value) {
+    const address = String(value || '');
+    return address.length > 18 ? `${address.slice(0, 8)}…${address.slice(-6)}` : address || '地址未知';
+  }
+
+  function zerionEvmAccounts() {
+    return state.accounts.filter((account) => account.provider === 'evm');
+  }
+
+  function setZerionMessage(message, kind = '') {
+    const node = byId('zerionMessage');
+    node.hidden = !message;
+    node.textContent = message || '';
+    node.className = `zerion-message ${kind}`.trim();
+  }
+
+  function zerionRunStatus(run) {
+    if (!run) return ['never', '尚未同步'];
+    return [run.status || 'never', {
+      succeeded: 'Shadow 同步成功',
+      partial: 'Shadow 部分完成',
+      failed: 'Shadow 同步失败',
+      running: 'Shadow 同步中',
+    }[run.status] || '状态未知'];
+  }
+
+  function remainingCooldownMinutes(value) {
+    const timestamp = Date.parse(value || '');
+    if (!Number.isFinite(timestamp)) return 0;
+    return Math.max(0, Math.ceil((timestamp - Date.now()) / 60000));
+  }
+
+  function renderZerionPanel() {
+    const status = state.zerionStatus;
+    const configured = Boolean(status?.configured);
+    const badge = byId('zerionStatusBadge');
+    badge.className = `zerion-badge ${configured ? 'configured' : 'unconfigured'}`;
+    badge.textContent = configured ? '服务器已配置' : '服务器未配置';
+
+    byId('zerionOverview').innerHTML = status ? `
+      <div class="zerion-metric"><small>请求频率</small><b>${escapeHtml(status.requests_per_second_limit)} 次 / 秒</b></div>
+      <div class="zerion-metric"><small>每日预算</small><b>${escapeHtml(status.daily_request_budget)} / ${escapeHtml(status.daily_request_limit)}</b></div>
+      <div class="zerion-metric"><small>单次同步上限</small><b>${escapeHtml(status.max_requests_per_run)} 次请求</b></div>
+      <div class="zerion-metric"><small>账户同步间隔</small><b>至少 ${escapeHtml(Math.ceil(status.min_sync_interval_seconds / 60))} 分钟</b></div>
+    ` : '<div class="empty-row">暂时无法读取 Zerion 服务状态。</div>';
+
+    const accounts = zerionEvmAccounts();
+    if (!accounts.length) {
+      byId('zerionAccounts').innerHTML = '<div class="empty-row">还没有 EVM 地址。请先通过上方连接向导添加公开钱包地址。</div>';
+      return;
+    }
+
+    byId('zerionAccounts').innerHTML = accounts.map((account) => {
+      const source = state.zerionSources.get(account.id) || null;
+      const run = state.zerionRuns.get(account.id) || null;
+      const enabled = Boolean(source?.is_enabled);
+      const cooldownMinutes = remainingCooldownMinutes(source?.next_sync_after);
+      const [runStatus, runStatusText] = zerionRunStatus(run);
+      const stats = run?.stats_json || {};
+      const rawCount = Number(stats.raw_created || 0) + Number(stats.raw_existing || 0);
+      const runDetail = run
+        ? `${Number(stats.request_count || run.request_count || 0)} 请求 · ${rawCount} Raw · Ledger ${Number(stats.ledger_created || 0)}`
+        : '尚无 Zerion Shadow 运行记录';
+      const sourceTitle = enabled ? 'Shadow 已启用' : source ? 'Shadow 已停用' : '尚未配置';
+      const sourceDetail = enabled
+        ? `仅写 RawEvent${cooldownMinutes ? ` · 冷却 ${cooldownMinutes} 分钟` : ''}`
+        : configured ? '可启用为影子数据源' : '需要服务器环境变量';
+      const syncDisabled = state.zerionBusy || !configured || !enabled || cooldownMinutes > 0;
+      const toggleDisabled = state.zerionBusy || (!configured && !enabled);
+      return `<article class="zerion-row" data-zerion-account="${escapeHtml(account.id)}">
+        <span class="source-mark zerion" aria-hidden="true">ZR</span>
+        <div class="zerion-account-main"><b>${escapeHtml(account.label)}</b><small>${escapeHtml(account.chain_id ? `Chain ${account.chain_id} · ` : '')}${escapeHtml(compactAddress(account.address))}</small></div>
+        <div class="zerion-source-state"><b>${escapeHtml(sourceTitle)}</b><small>${escapeHtml(sourceDetail)}</small></div>
+        <div class="zerion-run-state"><b class="${escapeHtml(runStatus)}">${escapeHtml(runStatusText)}</b><small>${escapeHtml(runDetail)} · ${escapeHtml(formatDate(run?.finished_at || run?.started_at))}</small></div>
+        <div class="zerion-actions">
+          <button class="row-action" data-zerion-action="${enabled ? 'disable' : 'enable'}" data-account-id="${escapeHtml(account.id)}" type="button" ${toggleDisabled ? 'disabled' : ''}>${enabled ? '停用' : '启用'}</button>
+          <button class="row-action primary" data-zerion-action="sync" data-account-id="${escapeHtml(account.id)}" type="button" ${syncDisabled ? 'disabled' : ''}>${cooldownMinutes ? `${cooldownMinutes} 分钟后` : 'Shadow 同步'}</button>
+        </div>
+      </article>`;
+    }).join('');
+  }
+
+  async function refreshZerionData() {
+    try {
+      state.zerionStatus = await BagsAuth.api('/zerion/status');
+      const rows = await Promise.all(zerionEvmAccounts().map(async (account) => {
+        let source = null;
+        let run = null;
+        try {
+          source = await BagsAuth.api(`/zerion/accounts/${account.id}/source`);
+        } catch (error) {
+          if (error.status !== 404) throw error;
+        }
+        try {
+          run = (await BagsAuth.api(`/zerion/accounts/${account.id}/sync-runs?limit=1`))[0] || null;
+        } catch (error) {
+          if (error.status !== 404) throw error;
+        }
+        return { accountId: account.id, source, run };
+      }));
+      state.zerionSources = new Map(rows.map((row) => [row.accountId, row.source]));
+      state.zerionRuns = new Map(rows.map((row) => [row.accountId, row.run]));
+      renderZerionPanel();
+    } catch (error) {
+      state.zerionStatus = null;
+      state.zerionSources = new Map();
+      state.zerionRuns = new Map();
+      renderZerionPanel();
+      setZerionMessage(`Zerion 状态读取失败：${error.message}`, 'error');
+    }
+  }
+
+  function closeZerionAuth() {
+    state.zerionPendingAction = null;
+    byId('zerionAuthPanel').hidden = true;
+    byId('zerionVerifyPassword').value = '';
+    byId('zerionVerifyTotp').value = '';
+    setMessage('zerionAuthMessage', '');
+  }
+
+  function openZerionAuth(type, accountId) {
+    if (state.zerionBusy) return;
+    const account = state.accounts.find((item) => item.id === accountId && item.provider === 'evm');
+    const source = state.zerionSources.get(accountId);
+    if (!account) return;
+    if (type === 'sync' && !source?.is_enabled) {
+      setZerionMessage('请先启用该账户的 Zerion Shadow 数据源。', 'error');
+      return;
+    }
+    const labels = {
+      enable: ['启用 Zerion Shadow', `为“${account.label}”启用只写 RawEvent 的影子数据源。`],
+      disable: ['停用 Zerion Shadow', `停用“${account.label}”的 Zerion 数据源，不删除已有 RawEvent。`],
+      sync: ['运行 Zerion Shadow 同步', `同步“${account.label}”，结果只进入 RawEvent，不写入 Ledger。`],
+    };
+    const [title, description] = labels[type] || labels.sync;
+    state.zerionPendingAction = { type, accountId };
+    byId('zerionAuthTitle').textContent = title;
+    byId('zerionAuthDescription').textContent = description;
+    byId('confirmZerionAction').textContent = { enable: '验证并启用', disable: '验证并停用', sync: '验证并同步' }[type];
+    const needsTotp = Boolean(state.user?.two_factor_enabled);
+    byId('zerionVerifyTotpField').hidden = !needsTotp;
+    byId('zerionAuthPanel').querySelector('.zerion-auth-fields').classList.toggle('with-totp', needsTotp);
+    byId('zerionAuthPanel').hidden = false;
+    setMessage('zerionAuthMessage', '');
+    byId('zerionVerifyPassword').focus({ preventScroll: true });
+    byId('zerionAuthPanel').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'nearest' });
+  }
+
+  function zerionErrorMessage(error) {
+    if (error.status === 429) return '该账户仍在同步冷却期，请等待倒计时结束后重试。';
+    if (error.status === 503) return '服务器尚未配置 Zerion。请先在 .env 中填写密钥并启用服务。';
+    return error.message;
+  }
+
+  async function confirmZerionAction() {
+    const pending = state.zerionPendingAction;
+    if (!pending || state.zerionBusy) return;
+    const password = byId('zerionVerifyPassword').value;
+    const totp = byId('zerionVerifyTotp').value.trim();
+    if (!password || (state.user?.two_factor_enabled && !/^\d{6}$/.test(totp))) {
+      setMessage('zerionAuthMessage', state.user?.two_factor_enabled ? '请输入当前密码和六位 TOTP 验证码。' : '请输入当前登录密码。');
+      return;
+    }
+
+    state.zerionBusy = true;
+    const button = byId('confirmZerionAction');
+    button.disabled = true;
+    button.textContent = '正在验证…';
+    setMessage('zerionAuthMessage', '');
+    renderZerionPanel();
+    try {
+      await BagsAuth.api('/auth/sensitive/verify', {
+        method: 'POST',
+        body: JSON.stringify({ current_password: password, totp_code: totp || null }),
+      });
+      button.textContent = pending.type === 'sync' ? '正在同步…' : '正在保存…';
+      let result = null;
+      if (pending.type === 'sync') {
+        result = await BagsAuth.api(`/zerion/accounts/${pending.accountId}/shadow-sync`, { method: 'POST', body: '{}' });
+      } else {
+        result = await BagsAuth.api(`/zerion/accounts/${pending.accountId}/source`, {
+          method: 'PUT',
+          body: JSON.stringify({ is_enabled: pending.type === 'enable', mode: pending.type === 'enable' ? 'shadow' : 'disabled' }),
+        });
+      }
+      closeZerionAuth();
+      state.zerionBusy = false;
+      await refreshZerionData();
+      if (pending.type === 'sync') {
+        const stats = result.stats_json || {};
+        const rawCount = Number(stats.raw_created || 0) + Number(stats.raw_existing || 0);
+        setZerionMessage(`Shadow 同步${result.status === 'failed' ? '失败' : '完成'}：${Number(stats.request_count || result.request_count || 0)} 次请求，${rawCount} 条 RawEvent，Ledger 新增 ${Number(stats.ledger_created || 0)}。`, result.status === 'failed' ? 'error' : 'success');
+      } else {
+        setZerionMessage(pending.type === 'enable' ? 'Zerion Shadow 已启用。现在可以手动运行首次同步。' : 'Zerion Shadow 已停用，历史 RawEvent 已保留。', 'success');
+      }
+      dispatchEvent(new CustomEvent('bags:data-changed'));
+    } catch (error) {
+      setMessage('zerionAuthMessage', zerionErrorMessage(error));
+    } finally {
+      state.zerionBusy = false;
+      button.disabled = false;
+      if (state.zerionPendingAction) button.textContent = { enable: '验证并启用', disable: '验证并停用', sync: '验证并同步' }[state.zerionPendingAction.type];
+      renderZerionPanel();
+      byId('zerionVerifyPassword').value = '';
+      byId('zerionVerifyTotp').value = '';
+    }
+  }
+
   async function latestRun(account, connection) {
     try {
       let path;
@@ -609,99 +815,20 @@
     return provider === 'hyperliquid' ? ['HL', 'hyperliquid'] : ['0x', 'evm'];
   }
 
-  function normalizedAddress(account) {
-    const value = account?.address || (account?.provider === 'hyperliquid' ? account.external_account_id : '');
-    return String(value || '').trim().toLowerCase();
-  }
-
-  function chainForAccount(account) {
-    return state.chains.find((chain) => String(chain.chain_id) === String(account.chain_id));
-  }
-
-  function walletGroups() {
-    const groups = new Map();
-    state.accounts.filter((account) => account.provider === 'evm' && normalizedAddress(account)).forEach((account) => {
-      const key = `${account.portfolio_id}|${normalizedAddress(account)}`;
-      if (!groups.has(key)) groups.set(key, { key, portfolioId: account.portfolio_id, address: normalizedAddress(account), evmAccounts: [], hyperAccount: null });
-      groups.get(key).evmAccounts.push(account);
-    });
-    state.accounts.filter((account) => account.provider === 'hyperliquid' && normalizedAddress(account)).forEach((account) => {
-      const group = groups.get(`${account.portfolio_id}|${normalizedAddress(account)}`);
-      if (group) group.hyperAccount = account;
-    });
-    return [...groups.values()].map((group) => ({
-      ...group,
-      evmAccounts: group.evmAccounts.sort((left, right) => Number(left.chain_id || 0) - Number(right.chain_id || 0)),
-      accounts: [...group.evmAccounts, ...(group.hyperAccount ? [group.hyperAccount] : [])],
-    }));
-  }
-
-  function walletGroupByPrimary(accountId) {
-    return walletGroups().find((group) => group.evmAccounts.some((account) => account.id === accountId)) || null;
-  }
-
-  function walletBaseLabel(group) {
-    const account = group?.evmAccounts[0] || group?.hyperAccount;
-    if (!account) return '链上钱包';
-    const suffixes = [...state.chains.map((chain) => chain.name), 'Hyperliquid'].sort((left, right) => right.length - left.length);
-    const suffix = suffixes.find((name) => account.label.endsWith(` · ${name}`));
-    return suffix ? account.label.slice(0, -(suffix.length + 3)) : account.label;
-  }
-
-  function compactAddress(address) {
-    return address?.length > 16 ? `${address.slice(0, 8)}…${address.slice(-6)}` : address || '—';
-  }
-
-  function aggregateRunStatus(runs) {
-    const priority = { failed: 5, partial: 4, running: 3, succeeded: 2, never: 1 };
-    return runs.reduce((current, run) => {
-      const status = run?.status || 'never';
-      return priority[status] > priority[current] ? status : current;
-    }, 'never');
-  }
-
   async function renderConnections() {
     const container = byId('connectionsList');
-    const groups = walletGroups();
-    const attachedHyperIds = new Set(groups.map((group) => group.hyperAccount?.id).filter(Boolean));
-    const standalone = state.accounts.filter((account) => account.provider !== 'evm'
-      && !attachedHyperIds.has(account.id)
-      && state.connections.some((connection) => connection.account_id === account.id));
-    const items = [...groups.map((group) => ({ type: 'wallet', group })), ...standalone.map((account) => ({ type: 'account', account }))];
-    if (!items.length) {
+    const manageable = state.accounts.filter((account) => account.provider === 'evm' || state.connections.some((connection) => connection.account_id === account.id));
+    if (!manageable.length) {
       container.innerHTML = '<div class="empty-row">还没有可同步的账户。完成上方连接向导后会显示在这里。</div>';
       return;
     }
     container.innerHTML = '<div class="loading-row">正在读取最近同步状态…</div>';
-    const rows = await Promise.all(items.map(async (item) => {
-      if (item.type === 'wallet') {
-        const runs = await Promise.all(item.group.accounts.map((account) => latestRun(account, state.connections.find((connection) => connection.account_id === account.id))));
-        return { ...item, runs };
-      }
-      const connection = state.connections.find((candidate) => candidate.account_id === item.account.id);
-      return { ...item, connection, run: await latestRun(item.account, connection) };
+    const rows = await Promise.all(manageable.map(async (account) => {
+      const connection = state.connections.find((item) => item.account_id === account.id);
+      const run = await latestRun(account, connection);
+      return { account, connection, run };
     }));
-    container.innerHTML = rows.map((row) => {
-      if (row.type === 'wallet') {
-        const group = row.group;
-        const status = aggregateRunStatus(row.runs);
-        const statusText = { succeeded: '同步成功', partial: '部分完成', failed: '同步失败', running: '同步中', never: '尚未同步' }[status];
-        const latestTime = row.runs.map((run) => run?.finished_at || run?.started_at).filter(Boolean).sort().at(-1);
-        const networks = [
-          ...group.evmAccounts.map((account) => chainForAccount(account)?.name || `Chain ${account.chain_id}`),
-          ...(group.hyperAccount ? ['Hyperliquid'] : []),
-        ];
-        const inactive = group.accounts.filter((account) => !account.is_active).length;
-        const primary = group.evmAccounts[0];
-        return `<article class="connection-row" data-account-row="${primary.id}">
-          <span class="source-mark evm">0x</span>
-          <div class="connection-main"><b>${escapeHtml(walletBaseLabel(group))}</b><small title="${escapeHtml(group.address)}">${escapeHtml(compactAddress(group.address))} · ${group.accounts.length} 个链上范围</small></div>
-          <div class="connection-status"><span class="sync-state ${escapeHtml(status)}">${escapeHtml(statusText)}</span><small>${escapeHtml(formatDate(latestTime))}</small></div>
-          <div class="connection-meta"><b>${escapeHtml(networks.join(' · '))}</b><small>${inactive ? `${inactive} 个范围已停用；` : ''}同一地址统一管理，历史账本保留</small></div>
-          <div class="row-actions"><button class="row-action" data-manage-wallet="${primary.id}" type="button">管理钱包</button><button class="row-action primary" data-resync-wallet="${primary.id}" type="button">全部同步</button></div>
-        </article>`;
-      }
-      const { account, connection, run } = row;
+    container.innerHTML = rows.map(({ account, connection, run }) => {
       const [mark, markClass] = providerMark(account.provider);
       const status = run?.status || 'never';
       const statusText = { succeeded: '同步成功', partial: '部分完成', failed: '同步失败', running: '同步中', never: '尚未同步' }[status];
@@ -712,7 +839,6 @@
         <div class="connection-status"><span class="sync-state ${escapeHtml(status)}">${escapeHtml(statusText)}</span><small>${escapeHtml(formatDate(run?.finished_at || run?.started_at))}</small></div>
         <div class="connection-meta"><b>${escapeHtml(connection?.name || '公开链上账户')}</b><small>${escapeHtml(detail)}</small></div>
         <div class="row-actions">
-          ${account.provider === 'binance' && connection ? `<button class="row-action" data-manage-binance="${connection.id}" type="button">管理交易对</button>` : ''}
           ${['binance', 'bybit', 'bitget'].includes(account.provider) && connection ? `<button class="row-action" data-rotate="${connection.id}" type="button">更新密钥</button>` : ''}
           <button class="row-action primary" data-resync="${account.id}" type="button">重新同步</button>
         </div>
@@ -732,6 +858,7 @@
     populatePortfolios();
     populateChains();
     await renderConnections();
+    await refreshZerionData();
     const configured = chains.filter((chain) => chain.configured).length;
     setSystemState(`API 正常 · ${accounts.length} 个账户 · ${configured} 条 EVM 网络可用`, 'ready');
   }
@@ -768,392 +895,6 @@
       button.disabled = false;
       button.textContent = '重新同步';
     }
-  }
-
-  async function resyncWalletGroup(primaryAccountId, button) {
-    const group = walletGroupByPrimary(primaryAccountId);
-    if (!group) return;
-    const activeAccounts = group.accounts.filter((account) => account.is_active);
-    if (!activeAccounts.length) {
-      setSystemState('这个钱包的所有读取范围都已停用。', 'error');
-      return;
-    }
-    button.disabled = true;
-    button.textContent = '同步中…';
-    setSystemState(`${walletBaseLabel(group)} 正在同步 ${activeAccounts.length} 个链上范围…`);
-    const failures = [];
-    try {
-      for (const account of activeAccounts) {
-        try {
-          const connection = state.connections.find((item) => item.account_id === account.id);
-          const run = account.provider === 'evm'
-            ? await BagsAuth.api(`/evm/accounts/${account.id}/sync`, { method: 'POST', body: '{}' })
-            : connection
-              ? await BagsAuth.api(`/perp-dex/connections/${connection.id}/sync`, { method: 'POST', body: JSON.stringify({ include_spot: true }) })
-              : null;
-          if (!run) throw new Error('缺少只读连接');
-          await refreshPortfolioSnapshot(account.portfolio_id, run);
-          if (run.status === 'failed') failures.push(`${account.label}：${run.error_message || '同步失败'}`);
-        } catch (error) {
-          failures.push(`${account.label}：${error.message}`);
-        }
-      }
-      await refreshData();
-      setSystemState(failures.length ? `钱包同步完成，但 ${failures.length} 个范围失败` : `${walletBaseLabel(group)} 全部同步完成`, failures.length ? 'error' : 'ready');
-      if (failures.length) setMessage('managerMessage', failures.join('；'));
-      dispatchEvent(new CustomEvent('bags:data-changed'));
-    } finally {
-      button.disabled = false;
-      button.textContent = '全部同步';
-    }
-  }
-
-  function setManagerMessage(message, success = false) {
-    setMessage('managerMessage', message, success);
-  }
-
-  function setManagerBusy(busy) {
-    state.managerBusy = busy;
-    const panel = byId('connectionManager');
-    panel.classList.toggle('manager-busy', busy);
-    panel.querySelectorAll('button, input, select, textarea').forEach((control) => { control.disabled = busy; });
-    byId('confirmManagerAuth').textContent = busy ? '正在处理…' : '验证并继续';
-  }
-
-  function closeManager() {
-    if (state.managerBusy) return;
-    byId('connectionManager').hidden = true;
-    byId('managerAuth').hidden = true;
-    state.managerType = null;
-    state.managerGroupPrimaryId = null;
-    state.managerConnectionId = null;
-    state.managerPendingAction = null;
-    byId('managerPassword').value = '';
-    byId('managerTotp').value = '';
-  }
-
-  function showManagerView(type) {
-    document.querySelectorAll('[data-manager-view]').forEach((view) => { view.hidden = view.dataset.managerView !== type; });
-    byId('managerAuth').hidden = true;
-    byId('connectionManager').hidden = false;
-  }
-
-  function renderWalletManager() {
-    const group = walletGroupByPrimary(state.managerGroupPrimaryId);
-    if (!group) {
-      closeManager();
-      return null;
-    }
-    byId('managerTitle').textContent = `管理 ${walletBaseLabel(group)}`;
-    byId('managerLead').textContent = '同一地址按链保存为独立账户；可以继续加链、停用读取范围和补充代币合约。';
-    byId('managerWalletAddress').textContent = group.address;
-    byId('managerPortfolioName').textContent = state.portfolios.find((portfolio) => portfolio.id === group.portfolioId)?.name || '—';
-    byId('managerWalletLabel').value = walletBaseLabel(group);
-    byId('managerNetworks').innerHTML = group.accounts.map((account) => {
-      const connection = state.connections.find((item) => item.account_id === account.id);
-      const network = account.provider === 'hyperliquid' ? 'Hyperliquid' : chainForAccount(account)?.name || `Chain ${account.chain_id}`;
-      const detail = account.provider === 'evm'
-        ? `Chain ${account.chain_id} · ${account.is_active ? '读取中' : '已停用'}`
-        : `${connection ? '公开地址连接' : '连接待补建'} · ${account.is_active ? '读取中' : '已停用'}`;
-      return `<div class="manager-item"><div><b>${escapeHtml(network)}</b><small>${escapeHtml(detail)}</small></div><button class="row-action ${account.is_active ? '' : 'primary'}" data-toggle-account="${account.id}" data-next-active="${account.is_active ? 'false' : 'true'}" type="button">${account.is_active ? '停用' : '重新启用'}</button></div>`;
-    }).join('');
-
-    const existingChainIds = new Set(group.evmAccounts.map((account) => String(account.chain_id)));
-    const available = state.chains.filter((chain) => chain.configured && !existingChainIds.has(String(chain.chain_id)));
-    byId('managerAvailableChains').innerHTML = `<legend>新增 EVM 网络</legend>${available.length
-      ? `<div class="manager-choice-grid">${available.map((chain) => `<label><input type="checkbox" name="managerChain" value="${escapeHtml(chain.key)}" /><span>${escapeHtml(chain.name)}</span></label>`).join('')}</div>`
-      : '<div class="empty-row">已添加服务器当前配置的全部 EVM 网络。</div>'}`;
-    byId('addWalletChains').hidden = !available.length;
-    const hyperConnection = group.hyperAccount && state.connections.find((item) => item.account_id === group.hyperAccount.id);
-    byId('addHyperliquidNetwork').hidden = Boolean(group.hyperAccount && hyperConnection);
-    byId('addHyperliquidNetwork').textContent = group.hyperAccount ? '补建 Hyperliquid 连接' : '添加 Hyperliquid';
-
-    const select = byId('managerContractChain');
-    const previous = select.value;
-    select.innerHTML = group.evmAccounts.map((account) => `<option value="${account.id}">${escapeHtml(chainForAccount(account)?.name || `Chain ${account.chain_id}`)}${account.is_active ? '' : '（已停用）'}</option>`).join('');
-    if (group.evmAccounts.some((account) => account.id === previous)) select.value = previous;
-    return group;
-  }
-
-  async function loadTrackedContracts() {
-    const accountId = byId('managerContractChain').value;
-    const container = byId('managerContracts');
-    if (!accountId) {
-      state.managerContracts = [];
-      container.innerHTML = '<div class="empty-row">没有可管理的 EVM 网络。</div>';
-      return;
-    }
-    container.innerHTML = '<div class="loading-row">正在读取合约…</div>';
-    try {
-      state.managerContracts = await BagsAuth.api(`/evm/accounts/${accountId}/tracked-contracts`);
-      container.innerHTML = state.managerContracts.length ? state.managerContracts.map((contract) => `<div class="manager-item"><div><b>${escapeHtml(contract.label || compactAddress(contract.contract_address))}</b><small>${escapeHtml(contract.contract_address)} · ${contract.is_active ? '持续跟踪' : '已停用'}</small></div><button class="row-action ${contract.is_active ? '' : 'primary'}" data-toggle-contract="${contract.id}" data-next-active="${contract.is_active ? 'false' : 'true'}" type="button">${contract.is_active ? '停用' : '重新启用'}</button></div>`).join('') : '<div class="empty-row">这条链还没有手动跟踪的代币合约。</div>';
-    } catch (error) {
-      container.innerHTML = `<div class="empty-row">${escapeHtml(error.message)}</div>`;
-    }
-  }
-
-  async function openWalletManager(primaryAccountId, scroll = true) {
-    state.managerType = 'evm';
-    state.managerGroupPrimaryId = primaryAccountId;
-    state.managerConnectionId = null;
-    showManagerView('evm');
-    setManagerMessage('');
-    if (!renderWalletManager()) return;
-    await loadTrackedContracts();
-    if (scroll) byId('connectionManager').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
-  }
-
-  function renderSpotScopes() {
-    const container = byId('managerSpotSymbols');
-    const sourceLabels = { balance: '当前持仓发现', manual: '手动添加', existing: '已有成交恢复' };
-    container.innerHTML = state.managerSpotScopes.length ? state.managerSpotScopes.map((scope) => `<div class="manager-item"><div><b>${escapeHtml(scope.symbol)}</b><small>${escapeHtml(sourceLabels[scope.discovery_source] || scope.discovery_source)} · ${scope.last_synced_at ? `上次同步 ${formatDate(scope.last_synced_at)}` : '尚未同步'} · ${scope.is_active ? '启用' : '停用'}</small></div><button class="row-action ${scope.is_active ? '' : 'primary'}" data-toggle-spot-scope="${scope.id}" data-next-active="${scope.is_active ? 'false' : 'true'}" type="button">${scope.is_active ? '停用' : '重新启用'}</button></div>`).join('') : '<div class="empty-row">尚未保存交易对。下次现货同步会根据当前非零持仓自动发现。</div>';
-  }
-
-  async function loadSpotScopes() {
-    byId('managerSpotSymbols').innerHTML = '<div class="loading-row">正在读取交易对…</div>';
-    try {
-      state.managerSpotScopes = await BagsAuth.api(`/binance/connections/${state.managerConnectionId}/spot-symbols`);
-      renderSpotScopes();
-    } catch (error) {
-      byId('managerSpotSymbols').innerHTML = `<div class="empty-row">${escapeHtml(error.message)}</div>`;
-    }
-  }
-
-  async function openBinanceManager(connectionId, scroll = true) {
-    const connection = state.connections.find((item) => item.id === connectionId && item.provider === 'binance');
-    const account = state.accounts.find((item) => item.id === connection?.account_id);
-    if (!connection || !account) return;
-    state.managerType = 'binance';
-    state.managerConnectionId = connectionId;
-    state.managerGroupPrimaryId = null;
-    showManagerView('binance');
-    byId('managerTitle').textContent = `管理 ${account.label} 现货范围`;
-    byId('managerLead').textContent = '自动发现与手动范围都会持久保存；停用不会删除已经导入的成交。';
-    setManagerMessage('');
-    await loadSpotScopes();
-    if (scroll) byId('connectionManager').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
-  }
-
-  function requestManagerAction(label, action) {
-    state.managerPendingAction = { label, action };
-    byId('managerAuthLead').textContent = `${label}前，需要重新验证当前管理员身份。`;
-    byId('managerTotpField').hidden = !state.user?.two_factor_enabled;
-    byId('managerTotp').value = '';
-    byId('managerPassword').value = '';
-    setMessage('managerAuthMessage', '');
-    byId('managerAuth').hidden = false;
-    byId('managerPassword').focus();
-  }
-
-  async function confirmManagerAction() {
-    const pending = state.managerPendingAction;
-    if (!pending || state.managerBusy) return;
-    const password = byId('managerPassword').value;
-    const totp = byId('managerTotp').value.trim();
-    if (!password || (state.user?.two_factor_enabled && !/^\d{6}$/.test(totp))) {
-      setMessage('managerAuthMessage', state.user?.two_factor_enabled ? '请输入当前密码和六位 TOTP 验证码。' : '请输入当前登录密码。');
-      return;
-    }
-    setManagerBusy(true);
-    setMessage('managerAuthMessage', '');
-    try {
-      await BagsAuth.api('/auth/sensitive/verify', { method: 'POST', body: JSON.stringify({ current_password: password, totp_code: totp || null }) });
-      byId('managerAuth').hidden = true;
-      const result = await pending.action();
-      const message = typeof result === 'string' ? result : result?.message || `${pending.label}已完成。`;
-      setManagerMessage(message, typeof result === 'object' ? result.success !== false : true);
-      state.managerPendingAction = null;
-      byId('managerPassword').value = '';
-      byId('managerTotp').value = '';
-    } catch (error) {
-      if (!byId('managerAuth').hidden) setMessage('managerAuthMessage', error.message);
-      else setManagerMessage(error.message);
-    } finally {
-      setManagerBusy(false);
-    }
-  }
-
-  async function refreshOpenManager() {
-    await refreshData();
-    if (state.managerType === 'evm') {
-      if (renderWalletManager()) await loadTrackedContracts();
-    } else if (state.managerType === 'binance') {
-      await loadSpotScopes();
-    }
-  }
-
-  function saveWalletLabel() {
-    const label = byId('managerWalletLabel').value.trim();
-    if (!label) {
-      byId('managerWalletLabel').focus();
-      setManagerMessage('请输入钱包展示名称。');
-      return;
-    }
-    requestManagerAction('保存钱包名称', async () => {
-      const group = walletGroupByPrimary(state.managerGroupPrimaryId);
-      if (!group) throw new Error('钱包已不存在，请刷新后重试。');
-      const multiple = group.accounts.length > 1;
-      for (const account of group.accounts) {
-        const suffix = account.provider === 'hyperliquid' ? 'Hyperliquid' : chainForAccount(account)?.name || `Chain ${account.chain_id}`;
-        const nextLabel = multiple ? `${label.slice(0, Math.max(1, 117 - suffix.length))} · ${suffix}` : label;
-        await BagsAuth.api(`/accounts/${account.id}`, { method: 'PATCH', body: JSON.stringify({ label: nextLabel }) });
-      }
-      await refreshOpenManager();
-      return '钱包名称已更新，同一地址下的链账户已统一。';
-    });
-  }
-
-  function toggleWalletAccount(accountId, isActive) {
-    requestManagerAction(isActive ? '重新启用读取范围' : '停用读取范围', async () => {
-      await BagsAuth.api(`/accounts/${accountId}`, { method: 'PATCH', body: JSON.stringify({ is_active: isActive }) });
-      await refreshOpenManager();
-      return isActive ? '读取范围已重新启用。' : '读取范围已停用，既有原始数据和账本没有删除。';
-    });
-  }
-
-  function addWalletChains() {
-    const keys = [...document.querySelectorAll('input[name="managerChain"]:checked')].map((input) => input.value);
-    if (!keys.length) {
-      setManagerMessage('请至少选择一条要新增的 EVM 网络。');
-      return;
-    }
-    requestManagerAction('添加 EVM 网络', async () => {
-      const group = walletGroupByPrimary(state.managerGroupPrimaryId);
-      if (!group) throw new Error('钱包已不存在，请刷新后重试。');
-      const chains = state.chains.filter((chain) => keys.includes(chain.key) && chain.configured);
-      const baseLabel = byId('managerWalletLabel').value.trim() || walletBaseLabel(group);
-      const finalCount = group.accounts.length + chains.length;
-      const failures = [];
-      for (const chain of chains) {
-        const account = await BagsAuth.api('/accounts', { method: 'POST', body: JSON.stringify({ portfolio_id: group.portfolioId, kind: 'wallet', provider: 'evm', label: evmAccountLabel(baseLabel, chain, finalCount), chain_id: chain.key, address: group.address }) });
-        try {
-          const run = await BagsAuth.api(`/evm/accounts/${account.id}/sync`, { method: 'POST', body: '{}' });
-          await refreshPortfolioSnapshot(group.portfolioId, run);
-          if (run.status === 'failed') failures.push(`${chain.name}：${run.error_message || '同步失败'}`);
-        } catch (error) {
-          failures.push(`${chain.name}：${error.message}`);
-        }
-      }
-      await refreshOpenManager();
-      dispatchEvent(new CustomEvent('bags:data-changed'));
-      return failures.length
-        ? { success: false, message: `网络已添加，但首次同步存在问题：${failures.join('；')}` }
-        : `已添加并同步 ${chains.length} 条网络。`;
-    });
-  }
-
-  function addHyperliquidNetwork() {
-    requestManagerAction('添加 Hyperliquid', async () => {
-      let group = walletGroupByPrimary(state.managerGroupPrimaryId);
-      if (!group) throw new Error('钱包已不存在，请刷新后重试。');
-      let account = group.hyperAccount;
-      if (!account) {
-        account = await BagsAuth.api('/accounts', { method: 'POST', body: JSON.stringify({ portfolio_id: group.portfolioId, kind: 'perp_dex', provider: 'hyperliquid', label: `${walletBaseLabel(group)} · Hyperliquid`, external_account_id: group.address, address: group.address }) });
-      }
-      let connection = state.connections.find((item) => item.account_id === account.id);
-      if (!connection) {
-        connection = await BagsAuth.api('/connections', { method: 'POST', body: JSON.stringify({ account_id: account.id, name: `${walletBaseLabel(group)} Public`, provider: 'hyperliquid', api_key: group.address, requested_permissions: ['read'] }) });
-      }
-      let syncError = null;
-      try {
-        const run = await BagsAuth.api(`/perp-dex/connections/${connection.id}/sync`, { method: 'POST', body: JSON.stringify({ include_spot: true }) });
-        await refreshPortfolioSnapshot(group.portfolioId, run);
-        if (run.status === 'failed') syncError = run.error_message || '首次同步失败';
-      } catch (error) {
-        syncError = error.message;
-      }
-      await refreshOpenManager();
-      dispatchEvent(new CustomEvent('bags:data-changed'));
-      return syncError ? { success: false, message: `Hyperliquid 已添加，但首次同步失败：${syncError}` } : 'Hyperliquid 已加入同一地址的钱包组。';
-    });
-  }
-
-  function addTrackedContracts() {
-    const contracts = splitValues(byId('managerContractAddresses').value).map((value) => value.toLowerCase());
-    const accountId = byId('managerContractChain').value;
-    if (!accountId || !contracts.length) {
-      setManagerMessage('请选择网络并输入至少一个代币合约地址。');
-      return;
-    }
-    requestManagerAction('保存代币合约', async () => {
-      await BagsAuth.api(`/evm/accounts/${accountId}/tracked-contracts`, { method: 'POST', body: JSON.stringify({ contracts: contracts.map((contract_address) => ({ contract_address })) }) });
-      byId('managerContractAddresses').value = '';
-      await loadTrackedContracts();
-      return `已保存 ${contracts.length} 个合约，后续普通同步会继续读取。`;
-    });
-  }
-
-  function toggleTrackedContract(contractId, isActive) {
-    const accountId = byId('managerContractChain').value;
-    requestManagerAction(isActive ? '重新启用代币合约' : '停用代币合约', async () => {
-      await BagsAuth.api(`/evm/accounts/${accountId}/tracked-contracts/${contractId}`, { method: 'PATCH', body: JSON.stringify({ is_active: isActive }) });
-      await loadTrackedContracts();
-      return isActive ? '代币合约已重新启用。' : '代币合约已停用，历史数据仍然保留。';
-    });
-  }
-
-  function backfillWallet() {
-    const accountId = byId('managerContractChain').value;
-    const from = byId('managerFromBlock').value;
-    const to = byId('managerToBlock').value;
-    const hashes = splitValues(byId('managerTransactionHashes').value).map((value) => value.toLowerCase());
-    if (!accountId || (!from && !to && !hashes.length)) {
-      setManagerMessage('请选择网络，并填写区块范围或至少一个交易哈希。');
-      return;
-    }
-    if (from && to && Number(to) < Number(from)) {
-      setManagerMessage('结束区块不能小于起始区块。');
-      return;
-    }
-    requestManagerAction('执行精确补扫', async () => {
-      const payload = { transaction_hashes: hashes };
-      if (from) payload.from_block = Number(from);
-      if (to) payload.to_block = Number(to);
-      const run = await BagsAuth.api(`/evm/accounts/${accountId}/sync`, { method: 'POST', body: JSON.stringify(payload) });
-      const account = state.accounts.find((item) => item.id === accountId);
-      if (account) await refreshPortfolioSnapshot(account.portfolio_id, run);
-      await refreshData();
-      dispatchEvent(new CustomEvent('bags:data-changed'));
-      return run.status === 'failed'
-        ? { success: false, message: run.error_message || '补扫失败，请查看同步状态。' }
-        : `补扫完成：写入 ${run.stats_json?.raw_events_inserted || 0} 条新原始事件。`;
-    });
-  }
-
-  function addSpotSymbols() {
-    const symbols = splitValues(byId('managerSpotSymbolInput').value).map((value) => value.toUpperCase());
-    if (!symbols.length || symbols.some((symbol) => !/^[A-Z0-9]{3,30}$/.test(symbol))) {
-      setManagerMessage('请输入有效的 Binance 现货交易对，例如 BTCUSDT。');
-      return;
-    }
-    requestManagerAction('添加 Binance 现货交易对', async () => {
-      const connectionId = state.managerConnectionId;
-      await BagsAuth.api(`/binance/connections/${connectionId}/spot-symbols`, { method: 'POST', body: JSON.stringify({ symbols }) });
-      const payload = { products: ['spot'], spot_symbols: symbols };
-      const historyStart = isoOrNull(byId('managerSpotHistoryStart').value);
-      if (historyStart) payload.history_start = historyStart;
-      let run;
-      try {
-        run = await BagsAuth.api(`/binance/connections/${connectionId}/sync`, { method: 'POST', body: JSON.stringify(payload) });
-      } catch (error) {
-        await loadSpotScopes();
-        throw new Error(`交易对已保存，但补扫失败：${error.message}`);
-      }
-      byId('managerSpotSymbolInput').value = '';
-      await refreshOpenManager();
-      dispatchEvent(new CustomEvent('bags:data-changed'));
-      return run.status === 'failed'
-        ? { success: false, message: `交易对已保存，但补扫失败：${run.error_message || '请查看同步状态'}` }
-        : `已保存并补扫 ${symbols.length} 个交易对。`;
-    });
-  }
-
-  function toggleSpotScope(scopeId, isActive) {
-    requestManagerAction(isActive ? '重新启用现货交易对' : '停用现货交易对', async () => {
-      await BagsAuth.api(`/binance/connections/${state.managerConnectionId}/spot-symbols/${scopeId}`, { method: 'PATCH', body: JSON.stringify({ is_active: isActive }) });
-      await loadSpotScopes();
-      return isActive ? '交易对已重新启用。' : '交易对已停用，既有成交不会删除。';
-    });
   }
 
   function startCredentialRotation(connectionId) {
@@ -1205,52 +946,25 @@
       setSystemState('正在刷新连接状态…');
       try { await refreshData(); } catch (error) { setSystemState(error.message, 'error'); }
     });
-    byId('closeManager').addEventListener('click', closeManager);
-    byId('saveWalletLabel').addEventListener('click', saveWalletLabel);
-    byId('addWalletChains').addEventListener('click', addWalletChains);
-    byId('addHyperliquidNetwork').addEventListener('click', addHyperliquidNetwork);
-    byId('managerContractChain').addEventListener('change', loadTrackedContracts);
-    byId('addTrackedContracts').addEventListener('click', addTrackedContracts);
-    byId('backfillWallet').addEventListener('click', backfillWallet);
-    byId('addSpotSymbols').addEventListener('click', addSpotSymbols);
-    byId('cancelManagerAuth').addEventListener('click', () => {
-      if (state.managerBusy) return;
-      state.managerPendingAction = null;
-      byId('managerAuth').hidden = true;
-      byId('managerPassword').value = '';
-      byId('managerTotp').value = '';
-    });
-    byId('confirmManagerAuth').addEventListener('click', confirmManagerAction);
-    [byId('managerPassword'), byId('managerTotp')].forEach((input) => input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        confirmManagerAction();
-      }
-    }));
     document.querySelectorAll('[data-back]').forEach((button) => button.addEventListener('click', () => setStep(Number(button.dataset.back))));
     byId('connectionsList').addEventListener('click', (event) => {
       const sync = event.target.closest('[data-resync]');
       if (sync) resyncAccount(sync.dataset.resync, sync);
-      const syncWallet = event.target.closest('[data-resync-wallet]');
-      if (syncWallet) resyncWalletGroup(syncWallet.dataset.resyncWallet, syncWallet);
       const rotate = event.target.closest('[data-rotate]');
       if (rotate) startCredentialRotation(rotate.dataset.rotate);
-      const wallet = event.target.closest('[data-manage-wallet]');
-      if (wallet) openWalletManager(wallet.dataset.manageWallet);
-      const binance = event.target.closest('[data-manage-binance]');
-      if (binance) openBinanceManager(binance.dataset.manageBinance);
     });
-    byId('connectionManager').addEventListener('click', (event) => {
-      const account = event.target.closest('[data-toggle-account]');
-      if (account) toggleWalletAccount(account.dataset.toggleAccount, account.dataset.nextActive === 'true');
-      const contract = event.target.closest('[data-toggle-contract]');
-      if (contract) toggleTrackedContract(contract.dataset.toggleContract, contract.dataset.nextActive === 'true');
-      const scope = event.target.closest('[data-toggle-spot-scope]');
-      if (scope) toggleSpotScope(scope.dataset.toggleSpotScope, scope.dataset.nextActive === 'true');
+    byId('zerionAccounts').addEventListener('click', (event) => {
+      const action = event.target.closest('[data-zerion-action]');
+      if (action && !action.disabled) openZerionAuth(action.dataset.zerionAction, action.dataset.accountId);
     });
-    document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && !byId('connectionManager').hidden && !state.managerBusy) closeManager();
-    });
+    byId('cancelZerionAction').addEventListener('click', closeZerionAuth);
+    byId('confirmZerionAction').addEventListener('click', confirmZerionAction);
+    [byId('zerionVerifyPassword'), byId('zerionVerifyTotp')].forEach((input) => input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        confirmZerionAction();
+      }
+    }));
     updateSourceForms();
     try {
       await refreshData();
