@@ -44,6 +44,19 @@ open TCP 80/443 in the cloud security group. Then run as root:
 ./deploy/ubuntu-production.sh example.com 203.0.113.10
 ```
 
+For every later production update, pull `main` and run the production script again:
+
+```bash
+cd /home/ubuntu/bags
+git pull --ff-only origin main
+sudo ./deploy/ubuntu-production.sh nmbags.org 43.156.30.192
+```
+
+Do not use `docker compose up -d --build` as the complete deployment command. The
+Compose file rebuilds PostgreSQL, Redis, and the API, while `bags-ui` is a hardened
+standalone container rebuilt and replaced by `ubuntu-bootstrap.sh`, which the
+production script invokes automatically.
+
 The production script keeps PostgreSQL, Redis, the API, and the UI on localhost,
 switches authentication to secure same-origin cookies, installs the official Ubuntu
 Caddy package, and enables automatic HTTPS. It binds Caddy to the primary cloud
