@@ -1,7 +1,8 @@
 from functools import lru_cache
+from typing import Annotated
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -55,7 +56,13 @@ class Settings(BaseSettings):
     transfer_review_score: int = 70
     transfer_match_max_events: int = 10_000
     valuation_max_age_hours: int = 24
-    cors_origins: list[str] = ["http://127.0.0.1:4173", "http://localhost:4173"]
+    # Accept an operator-friendly comma-separated env value. NoDecode is
+    # required because pydantic-settings otherwise tries JSON decoding before
+    # the field validator gets a chance to split the string.
+    cors_origins: Annotated[list[str], NoDecode] = [
+        "http://127.0.0.1:4173",
+        "http://localhost:4173",
+    ]
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
