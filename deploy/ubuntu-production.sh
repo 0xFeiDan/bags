@@ -101,9 +101,9 @@ if ! grep -Fxq "${EXPECTED_PUBLIC_IP}" <<<"${resolved_ips}"; then
   fail "请先在 Cloudflare 将 ${DOMAIN} 的 A 记录指向 ${EXPECTED_PUBLIC_IP}，并设为仅 DNS（灰色云朵）"
 fi
 
-bind_ip="$(ip -4 route show table main default | awk '{for (index = 1; index <= NF; index += 1) if ($index == "src") {print $(index + 1); exit}}')"
+bind_ip="$(ip -4 route show table main default | awk '{for (field = 1; field <= NF; field += 1) if ($field == "src") {print $(field + 1); exit}}')"
 if [[ -z "${bind_ip}" ]]; then
-  main_interface="$(ip -4 route show table main default | awk '{for (index = 1; index <= NF; index += 1) if ($index == "dev") {print $(index + 1); exit}}')"
+  main_interface="$(ip -4 route show table main default | awk '{for (field = 1; field <= NF; field += 1) if ($field == "dev") {print $(field + 1); exit}}')"
   [[ -n "${main_interface}" ]] || fail "无法识别腾讯云主网卡"
   bind_ip="$(ip -o -4 addr show dev "${main_interface}" scope global | awk 'NR == 1 {split($4, address, "/"); print address[1]}')"
 fi
