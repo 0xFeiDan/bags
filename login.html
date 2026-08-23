@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="description" content="登录 Bags 资产账本" />
+  <title>Bags · 安全登录</title>
+  <link rel="stylesheet" href="/auth-pages.css" />
+  <script defer src="/auth.js"></script>
+  <script defer src="/login.js"></script>
+</head>
+<body>
+  <main class="login-shell">
+    <section class="login-panel">
+      <a class="brand" href="/"><span class="brand-mark">B</span><strong>Bags</strong><em>LEDGER OS</em></a>
+      <div class="login-card">
+        <div class="eyebrow">SECURE ACCESS</div>
+        <h1 id="formTitle">登录资产账本</h1>
+        <p class="lede" id="formLead">使用管理员邮箱和密码继续。</p>
+        <form class="form" id="loginForm">
+          <label class="field"><span>邮箱</span><input id="email" type="email" autocomplete="username" required /></label>
+          <label class="field"><span>密码</span><input id="password" type="password" autocomplete="current-password" required minlength="10" /></label>
+          <label class="field" id="bootstrapRow" hidden><span>首次启动令牌</span><input id="bootstrapToken" type="password" autocomplete="off" /></label>
+          <label class="check" id="rememberRow"><input id="remember" type="checkbox" /> 记住此设备 30 天</label>
+          <button class="primary" type="submit" id="submitButton">登录</button>
+        </form>
+        <form class="form" id="totpForm" hidden>
+          <label class="field"><span>6 位动态验证码</span><input id="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required /></label>
+          <button class="primary" type="submit">验证并登录</button>
+          <button class="secondary" type="button" id="backButton">返回密码登录</button>
+        </form>
+        <p class="message" id="message" role="alert" aria-live="polite"></p>
+      </div>
+    </section>
+    <aside class="login-aside"><div><div class="eyebrow">PRIVATE BY DEFAULT</div><h2>你的资产数据，<br />只对已验证会话开放。</h2><p>密码使用 Argon2id 保存，会话令牌仅以哈希形式存入数据库，敏感操作需要再次验证身份。</p><div class="security-list"><span><b>01</b> 服务端会话 · HttpOnly Cookie</span><span><b>02</b> 登录限流 · IP 与邮箱双维度</span><span><b>03</b> 可选 TOTP · 兼容常用验证器</span></div></div></aside>
+  </main>
+</body>
+</html>

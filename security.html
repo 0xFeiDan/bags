@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="description" content="Bags 登录与安全设置" />
+  <title>Bags · 登录与安全</title>
+  <link rel="stylesheet" href="/auth-pages.css" />
+  <script defer src="/auth.js"></script>
+  <script defer src="/security.js"></script>
+</head>
+<body class="auth-pending" data-auth="required">
+  <main class="security-shell">
+    <header class="security-top"><a class="brand" href="/"><span class="brand-mark">B</span><strong>Bags</strong><em>SECURITY</em></a><a class="back" href="/">← 返回资产指挥台</a></header>
+    <section class="security-head"><div class="eyebrow">ACCOUNT PROTECTION</div><h1>登录与安全</h1><p data-current-email>正在验证当前会话…</p></section>
+    <div class="grid">
+      <article class="card"><header><h2>敏感操作验证</h2><p>验证后 10 分钟内可修改密码、TOTP 和其他设备会话。</p></header><form class="card-body" id="verifyForm"><label class="field"><span>当前密码</span><input id="currentPassword" type="password" autocomplete="current-password" required /></label><label class="field" id="verifyTotpRow" hidden><span>动态验证码</span><input id="verifyTotp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" /></label><button class="primary" type="submit">验证身份</button><p class="message" id="verifyMessage" aria-live="polite"></p></form></article>
+      <article class="card"><header><h2>双因素验证</h2><p>使用 RFC 6238 TOTP 验证器加强登录保护。</p></header><div class="card-body"><div class="row"><div><b>动态验证码</b><small>验证器应用每 30 秒生成一次</small></div><span class="status off" id="totpStatus">未启用</span></div><button class="secondary" type="button" id="totpSetup">开始设置</button><div id="totpEnroll" hidden><p class="secret" id="totpSecret"></p><p class="secret" id="totpUri"></p><div class="inline"><input id="totpConfirmCode" inputmode="numeric" placeholder="输入 6 位验证码" maxlength="6" /><button class="primary" type="button" id="totpConfirm">确认启用</button></div></div><button class="danger" type="button" id="totpDisable" hidden>关闭双因素验证</button><p class="message" id="totpMessage" aria-live="polite"></p></div></article>
+      <article class="card"><header><h2>修改密码</h2><p>新密码至少 10 个字符；修改后其他设备自动退出。</p></header><form class="card-body" id="passwordForm"><label class="field"><span>新密码</span><input id="newPassword" type="password" autocomplete="new-password" minlength="10" required /></label><button class="secondary" type="submit">更新密码</button><p class="message" id="passwordMessage" aria-live="polite"></p></form></article>
+      <article class="card"><header><h2>当前账户</h2><p>更换登录邮箱同样需要先完成敏感操作验证。</p></header><form class="card-body" id="emailForm"><div class="row"><div><b data-current-email></b><small>当前管理员邮箱</small></div></div><label class="field"><span>新邮箱</span><input id="newEmail" type="email" autocomplete="email" required /></label><button class="secondary" type="submit">更新邮箱</button><button class="danger" type="button" id="logout">退出当前设备</button><p class="message" id="accountMessage" aria-live="polite"></p></form></article>
+      <article class="card wide"><header><h2>登录设备</h2><p>查看仍有效的服务端会话，或退出其他设备。</p></header><div class="card-body"><div id="sessions"></div><button class="secondary" type="button" id="logoutOthers">退出其他所有设备</button><p class="message" id="sessionMessage" aria-live="polite"></p></div></article>
+    </div>
+  </main>
+</body>
+</html>
