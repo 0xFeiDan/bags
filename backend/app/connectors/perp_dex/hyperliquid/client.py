@@ -20,6 +20,7 @@ class HyperliquidClient:
         "spotClearinghouseState",
         "metaAndAssetCtxs",
         "spotMeta",
+        "spotMetaAndAssetCtxs",
         "userFillsByTime",
         "userFunding",
         "userNonFundingLedgerUpdates",

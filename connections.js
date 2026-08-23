@@ -375,6 +375,7 @@
       balances_created: '余额快照', positions_created: '仓位快照', equity_created: '权益快照', transfers_created: '转账事件',
       token_balances_created: '代币余额', transactions_scanned: '扫描交易', blocks_scanned: '扫描区块',
       dashboard_snapshot_created: '仪表盘快照',
+      prices_created: '市场价格',
     }[key] || key.replaceAll('_', ' ');
   }
 

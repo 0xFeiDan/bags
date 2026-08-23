@@ -105,10 +105,26 @@ class DashboardService:
         derivative_values, derivative_complete = self._derivative_account_values(
             accounts, latest_positions, equity_by_account, current_at
         )
+        hyperliquid_spot_accounts = set(
+            self.session.scalars(
+                select(BalanceSnapshot.account_id).where(
+                    BalanceSnapshot.account_id.in_([account.id for account in accounts]),
+                    BalanceSnapshot.source == "hyperliquid:spot",
+                    BalanceSnapshot.as_of <= current_at,
+                )
+            )
+        ) if accounts else set()
         skip_cost_accounts = {
             account.id
             for account in accounts
-            if self._uses_authoritative_equity(account) and account.id in derivative_values
+            if (
+                self._uses_authoritative_equity(account)
+                and account.id in derivative_values
+                and not (
+                    account.provider.lower() == "hyperliquid"
+                    and account.id in hyperliquid_spot_accounts
+                )
+            )
         }
 
         warnings = list(run.warnings_json or [])
@@ -154,15 +170,6 @@ class DashboardService:
             for account in stale_balance_accounts:
                 account_complete[account.id] = False
             warnings.append("One or more account balance snapshots are stale; current NAV was not calculated.")
-
-        unvalued_hyperliquid_spot = self._hyperliquid_spot_accounts(accounts, current_at)
-        if unvalued_hyperliquid_spot:
-            valuation_complete = False
-            for account_id in unvalued_hyperliquid_spot:
-                account_complete[account_id] = False
-            warnings.append(
-                "Hyperliquid Perp equity is available, but non-zero Spot balances still require USD prices."
-            )
 
         perp_equity = sum(derivative_values.values(), ZERO)
         if not all(derivative_complete.values()):
@@ -584,37 +591,6 @@ class DashboardService:
             else:
                 total += row.quantity * price
         return total, complete and self._is_fresh(latest_at, as_of)
-
-    def _hyperliquid_spot_accounts(self, accounts: list[Account], as_of: datetime) -> set[UUID]:
-        result: set[UUID] = set()
-        for account in accounts:
-            if account.provider.lower() != "hyperliquid":
-                continue
-            latest_at = self.session.scalar(
-                select(BalanceSnapshot.as_of)
-                .where(
-                    BalanceSnapshot.account_id == account.id,
-                    BalanceSnapshot.source == "hyperliquid:spot",
-                    BalanceSnapshot.as_of <= as_of,
-                )
-                .order_by(BalanceSnapshot.as_of.desc())
-                .limit(1)
-            )
-            if latest_at is None:
-                continue
-            nonzero = self.session.scalar(
-                select(BalanceSnapshot.id)
-                .where(
-                    BalanceSnapshot.account_id == account.id,
-                    BalanceSnapshot.source == "hyperliquid:spot",
-                    BalanceSnapshot.as_of == latest_at,
-                    BalanceSnapshot.quantity != ZERO,
-                )
-                .limit(1)
-            )
-            if nonzero:
-                result.add(account.id)
-        return result
 
     def _perp_unrealized(
         self,

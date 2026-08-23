@@ -40,6 +40,10 @@ class HyperliquidCollector:
         response = self.client.info({"type": "spotMeta"})
         return response if isinstance(response, dict) else {}
 
+    def spot_market_context(self) -> list[Any]:
+        response = self.client.info({"type": "spotMetaAndAssetCtxs"})
+        return response if isinstance(response, list) else []
+
     def fills(self, address: str, start: datetime, end: datetime) -> HistoryResult:
         return self._history(
             "userFillsByTime",

@@ -1,7 +1,7 @@
 import hashlib
 import json
 import re
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID
@@ -19,6 +19,7 @@ from app.models import (
     ApiConnection,
     Asset,
     AssetAlias,
+    AssetPrice,
     AssetType,
     BalanceSnapshot,
     EntryDirection,
@@ -64,6 +65,7 @@ class SyncStats:
         self.balances_created = 0
         self.positions_created = 0
         self.equity_created = 0
+        self.prices_created = 0
 
     def as_dict(self) -> dict[str, int]:
         return {
@@ -73,6 +75,7 @@ class SyncStats:
             "balances_created": self.balances_created,
             "positions_created": self.positions_created,
             "equity_created": self.equity_created,
+            "prices_created": self.prices_created,
         }
 
 
@@ -99,9 +102,10 @@ class HyperliquidSyncService:
 
         address = self._resolve_address(account, connection)
         end = request.history_end or utc_now()
-        # Hyperliquid state is current-only.  A stable observation key preserves
-        # idempotency while preventing history_end from backdating current state.
-        observed_at = datetime.combine(utc_now().date(), time.min, tzinfo=timezone.utc)
+        # Hyperliquid state is current-only. Record each sync at its actual
+        # observation time so a manual refresh cannot reuse an earlier daily
+        # balance while history_end remains reserved for history pagination.
+        observed_at = utc_now()
         start = request.history_start or (end - timedelta(days=90))
         if start >= end:
             raise ValueError("history_start must be before history_end")
@@ -262,13 +266,15 @@ class HyperliquidSyncService:
             return
         spot_state = collector.spot_state(address)
         self._raw(account, connection, f"spot_state:{int(as_of.timestamp() * 1000)}", "spot_state", as_of, spot_state)
-        spot_meta = collector.spot_meta()
-        self._public_raw(account, connection, "spot_meta", spot_meta, as_of)
+        spot_market_context = collector.spot_market_context()
+        spot_meta = spot_market_context[0] if len(spot_market_context) == 2 and isinstance(spot_market_context[0], dict) else {}
+        self._public_raw(account, connection, "spot_market_context", {"data": spot_market_context}, as_of)
         token_names = {
             int(item["index"]): str(item["name"])
             for item in spot_meta.get("tokens", [])
             if isinstance(item, dict) and item.get("index") is not None and item.get("name")
         }
+        spot_prices = self._spot_prices(spot_market_context)
         seen_balance_assets: set[UUID] = set()
         for balance in spot_state.get("balances", []):
             if not isinstance(balance, dict):
@@ -279,6 +285,9 @@ class HyperliquidSyncService:
             asset = self._asset(symbol, "spot")
             seen_balance_assets.add(asset.id)
             self._balance(account.id, asset.id, quantity, as_of)
+            price = spot_prices.get(int(token_index)) if token_index is not None else None
+            if price is not None and symbol.upper() not in {"USD", "USDC", "USDT"}:
+                self._price(asset.id, price, as_of, token_index=int(token_index))
         self._zero_missing_spot_balances(account.id, seen_balance_assets, as_of)
 
     def _sync_history(
@@ -520,6 +529,26 @@ class HyperliquidSyncService:
         self.session.add(BalanceSnapshot(account_id=account_id, asset_id=asset_id, quantity=quantity, source="hyperliquid:spot", as_of=as_of))
         self.stats.balances_created += 1
 
+    def _price(self, asset_id: UUID, price_usd: Decimal, as_of: datetime, *, token_index: int) -> None:
+        if price_usd <= 0 or self.session.scalar(
+            select(AssetPrice.id).where(
+                AssetPrice.asset_id == asset_id,
+                AssetPrice.source == "hyperliquid:spot",
+                AssetPrice.as_of == as_of,
+            )
+        ):
+            return
+        self.session.add(
+            AssetPrice(
+                asset_id=asset_id,
+                price_usd=price_usd,
+                source="hyperliquid:spot",
+                as_of=as_of,
+                metadata_json={"token_index": token_index},
+            )
+        )
+        self.stats.prices_created += 1
+
     def _zero_missing_spot_balances(self, account_id: UUID, seen_asset_ids: set[UUID], as_of: datetime) -> None:
         prior_assets = set(
             self.session.scalars(
@@ -570,6 +599,50 @@ class HyperliquidSyncService:
             if isinstance(market, dict) and isinstance(context, dict) and market.get("name"):
                 result[str(market["name"])] = decimal_value(context.get("markPx"))
         return result
+
+    @staticmethod
+    def _spot_prices(market_context: list[Any]) -> dict[int, Decimal]:
+        if len(market_context) != 2 or not isinstance(market_context[0], dict) or not isinstance(market_context[1], list):
+            return {}
+        meta = market_context[0]
+        token_names = {
+            int(item["index"]): str(item["name"]).upper()
+            for item in meta.get("tokens", [])
+            if isinstance(item, dict) and item.get("index") is not None and item.get("name")
+        }
+        prices: dict[int, Decimal] = {
+            index: Decimal("1")
+            for index, symbol in token_names.items()
+            if symbol in {"USD", "USDC", "USDT"}
+        }
+        pending: list[tuple[int, int, Decimal]] = []
+        for market, context in zip(meta.get("universe", []), market_context[1], strict=False):
+            if not isinstance(market, dict) or not isinstance(context, dict):
+                continue
+            tokens = market.get("tokens")
+            if not isinstance(tokens, list) or len(tokens) != 2:
+                continue
+            try:
+                base_index, quote_index = int(tokens[0]), int(tokens[1])
+            except (TypeError, ValueError):
+                continue
+            pair_price = decimal_value(context.get("midPx")) or decimal_value(context.get("markPx"))
+            if pair_price > 0:
+                pending.append((base_index, quote_index, pair_price))
+        while pending:
+            unresolved: list[tuple[int, int, Decimal]] = []
+            progressed = False
+            for base_index, quote_index, pair_price in pending:
+                quote_price = prices.get(quote_index)
+                if quote_price is None:
+                    unresolved.append((base_index, quote_index, pair_price))
+                    continue
+                prices.setdefault(base_index, pair_price * quote_price)
+                progressed = True
+            if not progressed:
+                break
+            pending = unresolved
+        return prices
 
     @staticmethod
     def _hash(payload: dict[str, Any]) -> str:

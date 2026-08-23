@@ -13,6 +13,7 @@ from app.models import (
     AccountEquitySnapshot,
     AccountKind,
     ApiConnection,
+    AssetPrice,
     BalanceSnapshot,
     LedgerEntry,
     LedgerEvent,
@@ -104,14 +105,17 @@ class FakeHyperliquidClient:
                     {"coin": "HYPE", "token": 1, "total": "2", "hold": "0", "entryNtl": "40"},
                 ]
             }
-        if request_type == "spotMeta":
-            return {
-                "tokens": [
-                    {"name": "USDC", "index": 0, "szDecimals": 8, "weiDecimals": 8},
-                    {"name": "HYPE", "index": 1, "szDecimals": 2, "weiDecimals": 8},
-                ],
-                "universe": [],
-            }
+        if request_type == "spotMetaAndAssetCtxs":
+            return [
+                {
+                    "tokens": [
+                        {"name": "USDC", "index": 0, "szDecimals": 8, "weiDecimals": 8},
+                        {"name": "HYPE", "index": 1, "szDecimals": 2, "weiDecimals": 8},
+                    ],
+                    "universe": [{"name": "HYPE/USDC", "tokens": [1, 0], "index": 0}],
+                },
+                [{"midPx": "20", "markPx": "20"}],
+            ]
         if request_type == "userFillsByTime":
             return [
                 {
@@ -151,6 +155,23 @@ class FakeHyperliquidClient:
                 {"time": 1_700_000_600_000, "hash": "0xclass", "delta": {"type": "accountClassTransfer", "usdc": "20"}},
             ]
         raise AssertionError(payload)
+
+
+class MissingSpotPriceClient(FakeHyperliquidClient):
+    def info(self, payload):
+        if payload["type"] == "spotMetaAndAssetCtxs":
+            type(self).calls.append(dict(payload))
+            return [
+                {
+                    "tokens": [
+                        {"name": "USDC", "index": 0},
+                        {"name": "HYPE", "index": 1},
+                    ],
+                    "universe": [{"name": "HYPE/USDC", "tokens": [1, 0], "index": 0}],
+                },
+                [{}],
+            ]
+        return super().info(payload)
 
 
 def test_hyperliquid_full_same_millisecond_page_is_marked_incomplete_not_skipped():
@@ -214,6 +235,7 @@ def test_hyperliquid_sync_normalizes_equity_positions_history_and_is_idempotent(
         "balances_created": 2,
         "positions_created": 1,
         "equity_created": 1,
+        "prices_created": 1,
     }
     equity = db_session.scalar(select(AccountEquitySnapshot).where(AccountEquitySnapshot.account_id == account.id))
     assert equity.equity == 1000
@@ -224,6 +246,8 @@ def test_hyperliquid_sync_normalizes_equity_positions_history_and_is_idempotent(
     assert position.position_side == "LONG"
     assert position.mark_price == 50000
     assert db_session.scalar(select(func.count()).select_from(BalanceSnapshot)) == 2
+    hype_price = db_session.scalar(select(AssetPrice).where(AssetPrice.source == "hyperliquid:spot"))
+    assert hype_price.price_usd == 20
     assert db_session.scalar(select(func.count()).select_from(LedgerEvent)) == 6
     assert db_session.scalar(select(func.count()).select_from(LedgerEntry)) == 10
     assert db_session.scalar(select(func.count()).select_from(LedgerEntry).where(LedgerEntry.fee_flag.is_(True))) == 3
@@ -232,9 +256,9 @@ def test_hyperliquid_sync_normalizes_equity_positions_history_and_is_idempotent(
     ledger_count = db_session.scalar(select(func.count()).select_from(LedgerEvent))
     second = HyperliquidSyncService(db_session, settings, client_factory=FakeHyperliquidClient).run(connection.id, request)
     assert second.status == SyncRunStatus.SUCCEEDED
-    assert second.stats_json["raw_created"] == 0
-    assert second.stats_json["raw_existing"] == raw_count
-    assert db_session.scalar(select(func.count()).select_from(RawEvent)) == raw_count
+    assert second.stats_json["raw_created"] == 2
+    assert second.stats_json["raw_existing"] == raw_count - 2
+    assert db_session.scalar(select(func.count()).select_from(RawEvent)) == raw_count + 2
     assert db_session.scalar(select(func.count()).select_from(LedgerEvent)) == ledger_count
 
 
@@ -249,7 +273,7 @@ def test_hyperliquid_sync_can_build_visible_dashboard_snapshot(db_session):
     )
     assert run.status == SyncRunStatus.SUCCEEDED
 
-    snapshot = DashboardService(db_session).capture_snapshot(account.portfolio_id, end)
+    snapshot = DashboardService(db_session).capture_snapshot(account.portfolio_id, datetime.now(timezone.utc))
     summary = DashboardService(db_session).summary(account.portfolio_id, run_id=snapshot.source_cost_run_id)
 
     assert snapshot.perp_equity == 1000
@@ -259,7 +283,7 @@ def test_hyperliquid_sync_can_build_visible_dashboard_snapshot(db_session):
     assert summary.accounts[0].provider == "hyperliquid"
 
 
-def test_hyperliquid_spot_without_prices_keeps_perp_visible_and_nav_incomplete(db_session):
+def test_hyperliquid_spot_prices_and_perp_are_combined_in_dashboard_nav(db_session):
     account, connection = seed_connection(db_session)
     settings = Settings(master_encryption_key=TEST_KEY)
     end = datetime.now(timezone.utc)
@@ -270,17 +294,41 @@ def test_hyperliquid_spot_without_prices_keeps_perp_visible_and_nav_incomplete(d
     )
     assert run.status == SyncRunStatus.SUCCEEDED
 
-    snapshot = DashboardService(db_session).capture_snapshot(account.portfolio_id, end)
+    snapshot = DashboardService(db_session).capture_snapshot(account.portfolio_id, datetime.now(timezone.utc))
+    summary = DashboardService(db_session).summary(account.portfolio_id, run_id=snapshot.source_cost_run_id)
+
+    assert snapshot.perp_equity == 1000
+    assert snapshot.total_nav == 1140
+    assert summary.perp_equity_usd == 1000
+    assert summary.cash_usd == 100
+    assert summary.spot_value_usd == 40
+    assert summary.total_net_worth_usd == 1140
+    assert summary.accounts[0].perp_equity_usd == 1000
+    assert summary.accounts[0].total_equity_usd == 1140
+    assert summary.accounts[0].valuation_complete is True
+
+
+def test_hyperliquid_unknown_spot_price_does_not_create_false_nav(db_session):
+    account, connection = seed_connection(db_session)
+    settings = Settings(master_encryption_key=TEST_KEY)
+    end = datetime.now(timezone.utc)
+
+    run = HyperliquidSyncService(db_session, settings, client_factory=MissingSpotPriceClient).run(
+        connection.id,
+        HyperliquidSyncRequest(history_start=end - timedelta(days=1), history_end=end, include_spot=True),
+    )
+    assert run.status == SyncRunStatus.SUCCEEDED
+
+    snapshot = DashboardService(db_session).capture_snapshot(account.portfolio_id, datetime.now(timezone.utc))
     summary = DashboardService(db_session).summary(account.portfolio_id, run_id=snapshot.source_cost_run_id)
 
     assert snapshot.perp_equity == 1000
     assert snapshot.total_nav is None
-    assert summary.perp_equity_usd == 1000
-    assert summary.total_net_worth_usd is None
+    assert summary.cash_usd == 100
+    assert summary.spot_value_usd == 0
     assert summary.accounts[0].perp_equity_usd == 1000
     assert summary.accounts[0].total_equity_usd is None
-    assert summary.accounts[0].valuation_complete is False
-    assert "Hyperliquid Perp equity is available" in " ".join(summary.health.warnings)
+    assert any("HYPE" in warning and "price" in warning for warning in summary.health.warnings)
 
 
 def test_public_hyperliquid_connection_uses_account_address_without_api_key(client):
