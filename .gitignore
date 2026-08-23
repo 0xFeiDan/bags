@@ -13,7 +13,6 @@ htmlcov/
 .ruff_cache/
 .mypy_cache/
 node_modules/
-.runtime/
 *.db
 *.sqlite
 *.sqlite3

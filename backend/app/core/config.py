@@ -53,20 +53,6 @@ class Settings(BaseSettings):
     evm_native_scan_max_blocks: int = 2_000
     evm_max_token_contracts: int = 250
     evm_confirmations: int = 12
-    # Zerion is deliberately disabled until an operator supplies a server-side
-    # key. Defaults follow the lower quota advertised by the live API response;
-    # provider response headers can tighten them further during a run.
-    zerion_enabled: bool = False
-    zerion_api_key: str | None = None
-    zerion_base_url: str = "https://api.zerion.io"
-    zerion_request_timeout_seconds: float = 20.0
-    zerion_max_retries: int = 0
-    zerion_requests_per_second_limit: int = 1
-    zerion_daily_request_limit: int = 300
-    zerion_max_requests_per_run: int = 3
-    zerion_min_sync_interval_seconds: int = 900
-    # Keep 10% of the observed 300-request daily quota as a diagnostic reserve.
-    zerion_daily_request_budget: int = 270
     transfer_match_window_hours: int = 72
     transfer_exact_hash_window_days: int = 30
     transfer_amount_candidate_tolerance: float = 0.05

@@ -1,9 +1,9 @@
 import enum
 import uuid
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -83,12 +83,6 @@ class SyncRunStatus(str, enum.Enum):
     SUCCEEDED = "succeeded"
     PARTIAL = "partial"
     FAILED = "failed"
-
-
-class DataSourceMode(str, enum.Enum):
-    DISABLED = "disabled"
-    SHADOW = "shadow"
-    ACTIVE = "active"
 
 
 class TransferCandidateStatus(str, enum.Enum):
@@ -303,87 +297,6 @@ class SyncCursor(Base):
     resource: Mapped[str] = mapped_column(String(96))
     cursor_value: Mapped[str | None] = mapped_column(String(512), nullable=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-
-
-class AccountDataSource(Base):
-    """A collector assignment, separate from the account's financial provider.
-
-    For example, an Account remains provider="evm" while Zerion is the
-    read-only collector. This prevents an external data vendor from becoming
-    part of the financial identity used by the ledger.
-    """
-
-    __tablename__ = "account_data_sources"
-    __table_args__ = (
-        UniqueConstraint("account_id", "provider", name="account_data_source_identity"),
-        Index("ix_account_data_sources_provider_enabled", "provider", "is_enabled"),
-    )
-
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    account_id: Mapped[UUID] = mapped_column(ForeignKey("accounts.id"), index=True)
-    provider: Mapped[str] = mapped_column(String(64), index=True)
-    mode: Mapped[DataSourceMode] = mapped_column(Enum(DataSourceMode, native_enum=False), default=DataSourceMode.DISABLED)
-    is_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    requests_per_second_limit: Mapped[int] = mapped_column(Integer, default=1)
-    daily_request_limit: Mapped[int] = mapped_column(Integer, default=300)
-    max_requests_per_run: Mapped[int] = mapped_column(Integer, default=3)
-    min_sync_interval_seconds: Mapped[int] = mapped_column(Integer, default=900)
-    daily_request_budget: Mapped[int] = mapped_column(Integer, default=270)
-    remote_subscription_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
-    cursor_value: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    next_sync_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-
-
-class ProviderSyncRun(Base):
-    """A persisted request budget and audit trail for a collector invocation."""
-
-    __tablename__ = "provider_sync_runs"
-    __table_args__ = (Index("ix_provider_sync_runs_source_started", "data_source_id", "started_at"),)
-
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    data_source_id: Mapped[UUID] = mapped_column(ForeignKey("account_data_sources.id"), index=True)
-    request_kind: Mapped[str] = mapped_column(String(64), default="manual")
-    status: Mapped[SyncRunStatus] = mapped_column(Enum(SyncRunStatus, native_enum=False), default=SyncRunStatus.RUNNING)
-    request_budget: Mapped[int] = mapped_column(Integer, default=0)
-    request_count: Mapped[int] = mapped_column(Integer, default=0)
-    stats_json: Mapped[dict] = mapped_column(JSON, default=dict)
-    warnings_json: Mapped[list] = mapped_column(JSON, default=list)
-    rate_limit_json: Mapped[dict] = mapped_column(JSON, default=dict)
-    error_code: Mapped[str | None] = mapped_column(String(96), nullable=True)
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-
-class ProviderSyncCursor(Base):
-    __tablename__ = "provider_sync_cursors"
-    __table_args__ = (UniqueConstraint("data_source_id", "resource", name="provider_sync_cursor_identity"),)
-
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    data_source_id: Mapped[UUID] = mapped_column(ForeignKey("account_data_sources.id"), index=True)
-    resource: Mapped[str] = mapped_column(String(96))
-    cursor_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    is_complete: Mapped[bool] = mapped_column(Boolean, default=False)
-    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-
-
-class ProviderQuotaUsage(Base):
-    __tablename__ = "provider_quota_usage"
-    __table_args__ = (UniqueConstraint("provider", "usage_date", name="provider_quota_usage_identity"),)
-
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    provider: Mapped[str] = mapped_column(String(64), index=True)
-    usage_date: Mapped[date] = mapped_column(Date, index=True)
-    request_count: Mapped[int] = mapped_column(Integer, default=0)
-    request_limit: Mapped[int] = mapped_column(Integer)
-    request_budget: Mapped[int] = mapped_column(Integer)
-    next_request_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    rate_limit_json: Mapped[dict] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
